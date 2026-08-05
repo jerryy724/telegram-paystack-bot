@@ -18,14 +18,14 @@ ADMIN_USERNAME = "jay_empire247"  # Support contact handle
 
 # Base Pricing Configuration
 PRICING_USD = {
-    "1_month": {"label": "1 Month ($10)", "usd": 10, "days": 30},
+    "1_month": {"label": "1 Month ($1)", "usd": 1, "days": 30},
     "6_months": {"label": "6 Months ($45)", "usd": 45, "days": 180},
     "lifetime": {"label": "Lifetime VIP ($100)", "usd": 100, "days": 36500}
 }
 
 # Regional Conversion Rates
 EXCHANGE_RATES = {
-    "GHS": {"rate": 15.20, "symbol": "GHS ", "multiplier": 100},
+    "GHS": {"rate": 10.20, "symbol": "GHS ", "multiplier": 100},
     "NGN": {"rate": 1600.0, "symbol": "₦", "multiplier": 100},
     "KES": {"rate": 130.0, "symbol": "KSh ", "multiplier": 100},
     "USD": {"rate": 1.0, "symbol": "$", "multiplier": 100}
