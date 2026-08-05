@@ -19,11 +19,11 @@ bot = Bot(token=BOT_TOKEN) if BOT_TOKEN else None
 mongo_client = MongoClient(MONGO_URI) if MONGO_URI else None
 db = mongo_client["telegram_bot_db"] if mongo_client else None
 
-# PRICING CONFIGURATION (USD)
+# PRICING CONFIGURATION (Amounts in lowest currency unit, e.g., 1000 = 10.00)
 PRICING = {
-    "1_month": {"label": "1 Month ($10)", "amount": 1000, "days": 30},
-    "6_months": {"label": "6 Months ($45)", "amount": 4500, "days": 180},
-    "lifetime": {"label": "Lifetime VIP ($100)", "amount": 10000, "days": 36500}
+    "1_month": {"label": "1 Month (10)", "amount": 1000, "days": 30},
+    "6_months": {"label": "6 Months (45)", "amount": 4500, "days": 180},
+    "lifetime": {"label": "Lifetime VIP (100)", "amount": 10000, "days": 36500}
 }
 
 @app.post("/telegram-webhook")
@@ -118,11 +118,13 @@ async def telegram_webhook(request: Request):
             channel_title = "JAY FX PREMIUM SIGNALS" if channel_type == "fx" else "JAY GOLD MASTER VIP"
             user_email = f"user_{chat_id}@jayempire.com"
             
-            headers = {"Authorization": f"Bearer {PAYSTACK_SECRET_KEY}"}
+            headers = {
+                "Authorization": f"Bearer {PAYSTACK_SECRET_KEY}",
+                "Content-Type": "application/json"
+            }
             payload = {
                 "email": user_email,
                 "amount": plan["amount"],
-                "currency": "USD",
                 "metadata": {
                     "telegram_id": chat_id,
                     "channel_type": channel_type,
@@ -142,6 +144,13 @@ async def telegram_webhook(request: Request):
                     text=f"Click below to proceed to checkout for <b>{channel_title} ({plan['label']})</b>:",
                     parse_mode="HTML",
                     reply_markup=btn
+                )
+            else:
+                error_msg = res_data.get("message", "Payment initialization failed.")
+                await bot.send_message(
+                    chat_id=chat_id,
+                    text=f"❌ Unable to generate payment link: <i>{error_msg}</i>",
+                    parse_mode="HTML"
                 )
 
     return {"status": "ok"}
