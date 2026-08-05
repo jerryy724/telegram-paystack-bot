@@ -37,8 +37,8 @@ async def telegram_webhook(request: Request):
         
         if text.startswith("/start"):
             keyboard = [
-                [InlineKeyboardButton("📈 JFX Premium Signals", callback_data="menu_forex")],
-                [InlineKeyboardButton("🪙 JAY Gold Master VIP Signals", callback_data="menu_gold")],
+                [InlineKeyboardButton("📈 JAY FX PREMIUM SIGNALS", callback_data="menu_forex")],
+                [InlineKeyboardButton("🪙 JAY GOLD MASTER VIP", callback_data="menu_gold")],
                 [InlineKeyboardButton("🛠️ Request a Service", callback_data="menu_services")]
             ]
             welcome_text = (
@@ -61,7 +61,7 @@ async def telegram_webhook(request: Request):
         
         # Signal Channels Tier Selection
         if action in ["menu_forex", "menu_gold"]:
-            channel_name = "JFX Premium Signals" if action == "menu_forex" else "JAY Gold Master VIP"
+            channel_name = "JAY FX PREMIUM SIGNALS" if action == "menu_forex" else "JAY GOLD MASTER VIP"
             prefix = "fx" if action == "menu_forex" else "gold"
             
             keyboard = [
@@ -97,8 +97,8 @@ async def telegram_webhook(request: Request):
         # Back to Main Menu
         elif action == "back_main":
             keyboard = [
-                [InlineKeyboardButton("📈 JFX Premium Signals", callback_data="menu_forex")],
-                [InlineKeyboardButton("🪙 JAY Gold Master VIP Signals", callback_data="menu_gold")],
+                [InlineKeyboardButton("📈 JAY FX PREMIUM SIGNALS", callback_data="menu_forex")],
+                [InlineKeyboardButton("🪙 JAY GOLD MASTER VIP", callback_data="menu_gold")],
                 [InlineKeyboardButton("🛠️ Request a Service", callback_data="menu_services")]
             ]
             await bot.send_message(
@@ -115,6 +115,7 @@ async def telegram_webhook(request: Request):
             plan_key = "_".join(parts[2:]) # '1_month', '6_months', or 'lifetime'
             
             plan = PRICING[plan_key]
+            channel_title = "JAY FX PREMIUM SIGNALS" if channel_type == "fx" else "JAY GOLD MASTER VIP"
             user_email = f"user_{chat_id}@jayempire.com"
             
             headers = {"Authorization": f"Bearer {PAYSTACK_SECRET_KEY}"}
@@ -138,7 +139,7 @@ async def telegram_webhook(request: Request):
                 btn = InlineKeyboardMarkup([[InlineKeyboardButton("💳 Complete Payment via Paystack", url=pay_url)]])
                 await bot.send_message(
                     chat_id=chat_id,
-                    text=f"Click below to proceed to checkout for <b>{plan['label']}</b>:",
+                    text=f"Click below to proceed to checkout for <b>{channel_title} ({plan['label']})</b>:",
                     parse_mode="HTML",
                     reply_markup=btn
                 )
@@ -157,6 +158,7 @@ async def paystack_webhook(request: Request):
         days = meta["days"]
         
         target_channel = FOREX_CHANNEL_ID if channel_type == "fx" else GOLD_CHANNEL_ID
+        channel_title = "JAY FX PREMIUM SIGNALS" if channel_type == "fx" else "JAY GOLD MASTER VIP"
         
         # Create single-use invite link expiring in 24 hours
         expire_timestamp = int((datetime.utcnow() + timedelta(hours=24)).timestamp())
@@ -179,7 +181,7 @@ async def paystack_webhook(request: Request):
         # Send join link directly to subscriber
         await bot.send_message(
             chat_id=telegram_id,
-            text=f"✅ <b>Payment Confirmed!</b>\nAccess link: {invite_link.invite_link}\n<i>(This link expires in 24 hours and can only be used once)</i>",
+            text=f"✅ <b>Payment Confirmed!</b>\nHere is your single-use link to join <b>{channel_title}</b>:\n{invite_link.invite_link}\n\n<i>(This link expires in 24 hours and can only be used once)</i>",
             parse_mode="HTML"
         )
         
