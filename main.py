@@ -16,19 +16,20 @@ FOREX_CHANNEL_ID = os.getenv("FOREX_CHANNEL_ID")
 GOLD_CHANNEL_ID = os.getenv("GOLD_CHANNEL_ID")
 ADMIN_USERNAME = "jay_empire247"  # Support contact handle
 
-# ==============================================================================
-# UPDATED PRICING CONFIGURATION
-# ==============================================================================
+# Target Bot Username for Direct Redirection After Payment
+BOT_USERNAME = "JAY_EMPIRE_ASSISTANT_BOT"
+
+# PRICING CONFIGURATION
 PRICING_USD = {
-    "1_month": {"label": "1 Month ($1)", "usd": 1, "days": 30},
+    "1_month": {"label": "1 Month ($15)", "usd": 15, "days": 30},
     "6_months": {"label": "6 Months ($45)", "usd": 45, "days": 180},
     "1_year": {"label": "1 Year ($100)", "usd": 100, "days": 365},
-    "lifetime": {"label": "Lifetime VIP ($500)", "usd": 500, "days": 36500}
+    "lifetime": {"label": "Lifetime VIP ($250)", "usd": 250, "days": 36500}
 }
 
-# Regional Conversion Rates
+# REGIONAL EXCHANGE RATES
 EXCHANGE_RATES = {
-    "GHS": {"rate": 1.00, "symbol": "GHS ", "multiplier": 100},
+    "GHS": {"rate": 15.20, "symbol": "GHS ", "multiplier": 100},
     "NGN": {"rate": 1600.0, "symbol": "₦", "multiplier": 100},
     "KES": {"rate": 130.0, "symbol": "KSh ", "multiplier": 100},
     "USD": {"rate": 1.0, "symbol": "$", "multiplier": 100}
@@ -101,9 +102,12 @@ async def auto_subscription_checker():
                     channel_title = "JAY FX PREMIUM SIGNALS" if channel_type == "fx" else "JAY GOLD MASTER VIP"
                     
                     try:
+                        # Kick member out of channel
                         await bot.ban_chat_member(chat_id=target_channel, user_id=user_id)
+                        # Immediately unban so they can rejoin in the future upon renewal
                         await bot.unban_chat_member(chat_id=target_channel, user_id=user_id)
                         
+                        # Notify user of expiration
                         renew_btn = InlineKeyboardMarkup([[
                             InlineKeyboardButton("🔄 Rejoin VIP Channel", callback_data="back_main")
                         ]])
@@ -120,6 +124,7 @@ async def auto_subscription_checker():
                     except Exception as e:
                         print(f"Failed to kick/notify expired user {user_id}: {e}")
                     
+                    # Mark record inactive in DB
                     db.subscribers.update_one({"_id": sub["_id"]}, {"$set": {"is_active": False}})
 
         except Exception as err:
@@ -267,10 +272,13 @@ async def telegram_webhook(request: Request):
                 "Authorization": f"Bearer {PAYSTACK_SECRET_KEY}",
                 "Content-Type": "application/json"
             }
+            
+            # Explicitly force Paystack to redirect browser back to the bot
             payload = {
                 "email": user_email,
                 "amount": amount_subunits,
                 "currency": "GHS",
+                "callback_url": f"https://t.me/{BOT_USERNAME}",
                 "metadata": {
                     "telegram_id": chat_id,
                     "channel_type": channel_type,
