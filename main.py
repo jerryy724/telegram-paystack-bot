@@ -28,7 +28,7 @@ PRICING_USD = {
 
 # Regional Conversion Rates
 EXCHANGE_RATES = {
-    "GHS": {"rate": 10.20, "symbol": "GHS ", "multiplier": 100},
+    "GHS": {"rate": 1.00, "symbol": "GHS ", "multiplier": 100},
     "NGN": {"rate": 1600.0, "symbol": "₦", "multiplier": 100},
     "KES": {"rate": 130.0, "symbol": "KSh ", "multiplier": 100},
     "USD": {"rate": 1.0, "symbol": "$", "multiplier": 100}
