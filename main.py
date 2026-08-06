@@ -16,16 +16,19 @@ FOREX_CHANNEL_ID = os.getenv("FOREX_CHANNEL_ID")
 GOLD_CHANNEL_ID = os.getenv("GOLD_CHANNEL_ID")
 ADMIN_USERNAME = "jay_empire247"  # Support contact handle
 
-# Base Pricing Configuration
+# ==============================================================================
+# UPDATED PRICING CONFIGURATION
+# ==============================================================================
 PRICING_USD = {
-    "1_month": {"label": "1 Month ($10)", "usd": 10, "days": 30},
+    "1_month": {"label": "1 Month ($1)", "usd": 1, "days": 30},
     "6_months": {"label": "6 Months ($45)", "usd": 45, "days": 180},
-    "lifetime": {"label": "Lifetime VIP ($100)", "usd": 100, "days": 36500}
+    "1_year": {"label": "1 Year ($100)", "usd": 100, "days": 365},
+    "lifetime": {"label": "Lifetime VIP ($500)", "usd": 500, "days": 36500}
 }
 
 # Regional Conversion Rates
 EXCHANGE_RATES = {
-    "GHS": {"rate": 15.20, "symbol": "GHS ", "multiplier": 100},
+    "GHS": {"rate": 10.20, "symbol": "GHS ", "multiplier": 100},
     "NGN": {"rate": 1600.0, "symbol": "₦", "multiplier": 100},
     "KES": {"rate": 130.0, "symbol": "KSh ", "multiplier": 100},
     "USD": {"rate": 1.0, "symbol": "$", "multiplier": 100}
@@ -98,12 +101,9 @@ async def auto_subscription_checker():
                     channel_title = "JAY FX PREMIUM SIGNALS" if channel_type == "fx" else "JAY GOLD MASTER VIP"
                     
                     try:
-                        # Kick member out of channel
                         await bot.ban_chat_member(chat_id=target_channel, user_id=user_id)
-                        # Immediately unban so they can rejoin in the future upon buying again
                         await bot.unban_chat_member(chat_id=target_channel, user_id=user_id)
                         
-                        # Notify user of expiration
                         renew_btn = InlineKeyboardMarkup([[
                             InlineKeyboardButton("🔄 Rejoin VIP Channel", callback_data="back_main")
                         ]])
@@ -120,21 +120,17 @@ async def auto_subscription_checker():
                     except Exception as e:
                         print(f"Failed to kick/notify expired user {user_id}: {e}")
                     
-                    # Mark record inactive in DB
                     db.subscribers.update_one({"_id": sub["_id"]}, {"$set": {"is_active": False}})
 
         except Exception as err:
             print(f"Error in background task loop: {err}")
             
-        # Wait 1 hour (3600 seconds) before running next check loop
         await asyncio.sleep(3600)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Start background scheduler when Render starts app
     task = asyncio.create_task(auto_subscription_checker())
     yield
-    # Stop background task on app shutdown
     task.cancel()
 
 app = FastAPI(lifespan=lifespan)
@@ -146,7 +142,6 @@ app = FastAPI(lifespan=lifespan)
 async def telegram_webhook(request: Request):
     data = await request.json()
     
-    # Start Command
     if "message" in data:
         chat_id = data["message"]["chat"]["id"]
         text = data["message"].get("text", "")
@@ -169,13 +164,11 @@ async def telegram_webhook(request: Request):
                 reply_markup=InlineKeyboardMarkup(keyboard)
             )
 
-    # Button Callbacks
     elif "callback_query" in data:
         query = data["callback_query"]
         chat_id = query["message"]["chat"]["id"]
         action = query["data"]
         
-        # Terms & Conditions Screen
         if action in ["terms_fx", "terms_gold"]:
             target_prefix = "fx" if action == "terms_fx" else "gold"
             keyboard = [
@@ -189,7 +182,6 @@ async def telegram_webhook(request: Request):
                 reply_markup=InlineKeyboardMarkup(keyboard)
             )
 
-        # Region / Currency Selection Screen
         elif action in ["curr_fx", "curr_gold"]:
             prefix = "fx" if action == "curr_fx" else "gold"
             keyboard = [
@@ -206,7 +198,6 @@ async def telegram_webhook(request: Request):
                 reply_markup=InlineKeyboardMarkup(keyboard)
             )
 
-        # Package Tier Selection
         elif action.startswith("plan_"):
             parts = action.split("_")
             prefix = parts[1]
@@ -217,6 +208,7 @@ async def telegram_webhook(request: Request):
             keyboard = [
                 [InlineKeyboardButton(PRICING_USD["1_month"]["label"], callback_data=f"buy_{prefix}_1_month_{curr}")],
                 [InlineKeyboardButton(PRICING_USD["6_months"]["label"], callback_data=f"buy_{prefix}_6_months_{curr}")],
+                [InlineKeyboardButton(PRICING_USD["1_year"]["label"], callback_data=f"buy_{prefix}_1_year_{curr}")],
                 [InlineKeyboardButton(PRICING_USD["lifetime"]["label"], callback_data=f"buy_{prefix}_lifetime_{curr}")],
                 [InlineKeyboardButton("⬅️ Back to Main Menu", callback_data="back_main")]
             ]
@@ -227,7 +219,6 @@ async def telegram_webhook(request: Request):
                 reply_markup=InlineKeyboardMarkup(keyboard)
             )
 
-        # Custom Services Options
         elif action == "menu_services":
             profile_url = f"https://t.me/{ADMIN_USERNAME}"
             keyboard = [
@@ -244,7 +235,6 @@ async def telegram_webhook(request: Request):
                 reply_markup=InlineKeyboardMarkup(keyboard)
             )
 
-        # Return Main Menu
         elif action == "back_main":
             keyboard = [
                 [InlineKeyboardButton("📈 JAY FX PREMIUM SIGNALS", callback_data="terms_fx")],
@@ -258,7 +248,6 @@ async def telegram_webhook(request: Request):
                 reply_markup=InlineKeyboardMarkup(keyboard)
             )
 
-        # Checkout Link Generation
         elif action.startswith("buy_"):
             parts = action.split("_")
             channel_type = parts[1]
