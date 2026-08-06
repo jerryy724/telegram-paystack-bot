@@ -21,7 +21,7 @@ BOT_USERNAME = "JAY_EMPIRE_ASSISTANT_BOT"
 
 # PRICING CONFIGURATION
 PRICING_USD = {
-    "1_month": {"label": "1 Month ($15)", "usd": 15, "days": 30},
+    "1_month": {"label": "1 Month ($1)", "usd": 1, "days": 30},
     "6_months": {"label": "6 Months ($45)", "usd": 45, "days": 180},
     "1_year": {"label": "1 Year ($100)", "usd": 100, "days": 365},
     "lifetime": {"label": "Lifetime VIP ($250)", "usd": 250, "days": 36500}
@@ -29,7 +29,7 @@ PRICING_USD = {
 
 # REGIONAL EXCHANGE RATES
 EXCHANGE_RATES = {
-    "GHS": {"rate": 15.20, "symbol": "GHS ", "multiplier": 100},
+    "GHS": {"rate": 1.00, "symbol": "GHS ", "multiplier": 100},
     "NGN": {"rate": 1600.0, "symbol": "₦", "multiplier": 100},
     "KES": {"rate": 130.0, "symbol": "KSh ", "multiplier": 100},
     "USD": {"rate": 1.0, "symbol": "$", "multiplier": 100}
