@@ -16,7 +16,7 @@ FOREX_CHANNEL_ID = os.getenv("FOREX_CHANNEL_ID")
 GOLD_CHANNEL_ID = os.getenv("GOLD_CHANNEL_ID")
 ADMIN_USERNAME = "jay_empire247"  # Support contact handle
 
-# CORRECTED BOT USERNAME (Matched from screenshot 1)
+# CORRECTED BOT USERNAME
 BOT_USERNAME = "JayEmpire_bot"
 
 # PRICING CONFIGURATION
@@ -29,7 +29,7 @@ PRICING_USD = {
 
 # REGIONAL EXCHANGE RATES
 EXCHANGE_RATES = {
-    "GHS": {"rate": 1.0, "symbol": "GHS ", "multiplier": 100},
+    "GHS": {"rate": 1.00, "symbol": "GHS ", "multiplier": 100},
     "NGN": {"rate": 1600.0, "symbol": "₦", "multiplier": 100},
     "KES": {"rate": 130.0, "symbol": "KSh ", "multiplier": 100},
     "USD": {"rate": 1.0, "symbol": "$", "multiplier": 100}
@@ -147,7 +147,44 @@ async def telegram_webhook(request: Request):
         chat_id = data["message"]["chat"]["id"]
         text = data["message"].get("text", "")
         
+        # Handle deep link parameter when returning from Paystack (/start success)
         if text.startswith("/start"):
+            if "success" in text:
+                # Check if user has an active pending or generated link in database
+                sub = db.subscribers.find_one({"telegram_id": chat_id, "is_active": True}) if db is not None else None
+                
+                if sub:
+                    channel_title = "JAY FX PREMIUM SIGNALS" if sub["channel"] == "fx" else "JAY GOLD MASTER VIP"
+                    link = sub.get("invite_link")
+                    
+                    if link:
+                        join_btn = InlineKeyboardMarkup([[InlineKeyboardButton("🚀 Join Channel Now", url=link)]])
+                        await bot.send_message(
+                            chat_id=chat_id,
+                            text=(
+                                f"🎉 <b>Congratulations! Payment Verified!</b>\n\n"
+                                f"You have successfully subscribed to <b>{channel_title}</b>.\n"
+                                f"Tap the button below to join your channel immediately:"
+                            ),
+                            parse_mode="HTML",
+                            reply_markup=join_btn
+                        )
+                        return {"status": "ok"}
+                
+                # If webhook is still processing, show instant polling screen
+                check_btn = InlineKeyboardMarkup([[InlineKeyboardButton("🔄 Refresh My Access Link", callback_data="check_active_sub")]])
+                await bot.send_message(
+                    chat_id=chat_id,
+                    text=(
+                        "🎉 <b>Welcome back! Payment Received.</b>\n\n"
+                        "Your transaction is currently finalizing. Click below to retrieve your direct channel access link:"
+                    ),
+                    parse_mode="HTML",
+                    reply_markup=check_btn
+                )
+                return {"status": "ok"}
+
+            # Standard /start command main menu
             keyboard = [
                 [InlineKeyboardButton("📈 JAY FX PREMIUM SIGNALS", callback_data="terms_fx")],
                 [InlineKeyboardButton("🪙 JAY GOLD MASTER VIP", callback_data="terms_gold")],
@@ -170,7 +207,29 @@ async def telegram_webhook(request: Request):
         chat_id = query["message"]["chat"]["id"]
         action = query["data"]
         
-        if action in ["terms_fx", "terms_gold"]:
+        # Check active sub callback button
+        if action == "check_active_sub":
+            sub = db.subscribers.find_one({"telegram_id": chat_id, "is_active": True}) if db is not None else None
+            if sub and sub.get("invite_link"):
+                channel_title = "JAY FX PREMIUM SIGNALS" if sub["channel"] == "fx" else "JAY GOLD MASTER VIP"
+                join_btn = InlineKeyboardMarkup([[InlineKeyboardButton("🚀 Join Channel Now", url=sub["invite_link"])]])
+                await bot.send_message(
+                    chat_id=chat_id,
+                    text=(
+                        f"🎉 <b>Congratulations! Subscription Active!</b>\n\n"
+                        f"Welcome to <b>{channel_title}</b>. Click below to enter:"
+                    ),
+                    parse_mode="HTML",
+                    reply_markup=join_btn
+                )
+            else:
+                await bot.send_message(
+                    chat_id=chat_id,
+                    text="⏳ Payment is still processing with Paystack. Please wait a few seconds and try clicking again.",
+                    parse_mode="HTML"
+                )
+
+        elif action in ["terms_fx", "terms_gold"]:
             target_prefix = "fx" if action == "terms_fx" else "gold"
             keyboard = [
                 [InlineKeyboardButton("✅ I Agree & Proceed", callback_data=f"curr_{target_prefix}")],
@@ -273,7 +332,7 @@ async def telegram_webhook(request: Request):
                 "email": user_email,
                 "amount": amount_subunits,
                 "currency": "GHS",
-                "callback_url": f"https://t.me/{BOT_USERNAME}",
+                "callback_url": f"https://t.me/{BOT_USERNAME}?start=success",
                 "metadata": {
                     "telegram_id": chat_id,
                     "channel_type": channel_type,
@@ -339,13 +398,14 @@ async def paystack_webhook(request: Request):
             
             # Generate single-use invite link expiring in 24 hours
             expire_timestamp = int((datetime.utcnow() + timedelta(hours=24)).timestamp())
-            invite_link = await bot.create_chat_invite_link(
+            created_invite = await bot.create_chat_invite_link(
                 chat_id=target_channel,
                 member_limit=1,
                 expire_date=expire_timestamp
             )
+            invite_url = created_invite.invite_link
             
-            # Save or update subscriber record in MongoDB Atlas database
+            # Save subscriber record in MongoDB Atlas
             if db is not None:
                 db.subscribers.update_one(
                     {"telegram_id": telegram_id, "channel": channel_type},
@@ -353,6 +413,7 @@ async def paystack_webhook(request: Request):
                         "telegram_id": telegram_id,
                         "channel": channel_type,
                         "days": days,
+                        "invite_link": invite_url,
                         "joined_at": datetime.utcnow(),
                         "expires_at": datetime.utcnow() + timedelta(days=days),
                         "is_active": True,
@@ -361,17 +422,19 @@ async def paystack_webhook(request: Request):
                     upsert=True
                 )
                 
-            # Send single-use link directly to user in their DM with @JayEmpire_bot
+            # Send Congratulatory Access Card with embedded Join Channel button
+            join_btn = InlineKeyboardMarkup([[InlineKeyboardButton(f"🚀 Join {channel_title}", url=invite_url)]])
+            
             await bot.send_message(
                 chat_id=telegram_id,
                 text=(
-                    f"✅ <b>Payment Confirmed!</b>\n\n"
-                    f"Here is your single-use access link for <b>{channel_title}</b>:\n"
-                    f"{invite_link.invite_link}\n\n"
-                    f"<i>(This link expires in 24 hours and can only be used once)</i>\n"
-                    f"For support: @jay_empire247"
+                    f"🎉 <b>CONGRATULATIONS! PAYMENT CONFIRMED!</b>\n\n"
+                    f"You have successfully subscribed to <b>{channel_title}</b>.\n\n"
+                    f"Click the button below to join the channel immediately:\n"
+                    f"<i>(Note: This single-use link expires in 24 hours)</i>"
                 ),
-                parse_mode="HTML"
+                parse_mode="HTML",
+                reply_markup=join_btn
             )
         
     return {"status": "success"}
