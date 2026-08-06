@@ -16,8 +16,8 @@ FOREX_CHANNEL_ID = os.getenv("FOREX_CHANNEL_ID")
 GOLD_CHANNEL_ID = os.getenv("GOLD_CHANNEL_ID")
 ADMIN_USERNAME = "jay_empire247"  # Support contact handle
 
-# Target Bot Username for Direct Redirection After Payment
-BOT_USERNAME = "JAY_EMPIRE_ASSISTANT_BOT"
+# CORRECTED BOT USERNAME (Matched from screenshot 1)
+BOT_USERNAME = "JayEmpire_bot"
 
 # PRICING CONFIGURATION
 PRICING_USD = {
@@ -29,7 +29,7 @@ PRICING_USD = {
 
 # REGIONAL EXCHANGE RATES
 EXCHANGE_RATES = {
-    "GHS": {"rate": 1.00, "symbol": "GHS ", "multiplier": 100},
+    "GHS": {"rate": 1.0, "symbol": "GHS ", "multiplier": 100},
     "NGN": {"rate": 1600.0, "symbol": "₦", "multiplier": 100},
     "KES": {"rate": 130.0, "symbol": "KSh ", "multiplier": 100},
     "USD": {"rate": 1.0, "symbol": "$", "multiplier": 100}
@@ -102,12 +102,9 @@ async def auto_subscription_checker():
                     channel_title = "JAY FX PREMIUM SIGNALS" if channel_type == "fx" else "JAY GOLD MASTER VIP"
                     
                     try:
-                        # Kick member out of channel
                         await bot.ban_chat_member(chat_id=target_channel, user_id=user_id)
-                        # Immediately unban so they can rejoin in the future upon renewal
                         await bot.unban_chat_member(chat_id=target_channel, user_id=user_id)
                         
-                        # Notify user of expiration
                         renew_btn = InlineKeyboardMarkup([[
                             InlineKeyboardButton("🔄 Rejoin VIP Channel", callback_data="back_main")
                         ]])
@@ -124,7 +121,6 @@ async def auto_subscription_checker():
                     except Exception as e:
                         print(f"Failed to kick/notify expired user {user_id}: {e}")
                     
-                    # Mark record inactive in DB
                     db.subscribers.update_one({"_id": sub["_id"]}, {"$set": {"is_active": False}})
 
         except Exception as err:
@@ -273,7 +269,6 @@ async def telegram_webhook(request: Request):
                 "Content-Type": "application/json"
             }
             
-            # Explicitly force Paystack to redirect browser back to the bot
             payload = {
                 "email": user_email,
                 "amount": amount_subunits,
@@ -296,15 +291,20 @@ async def telegram_webhook(request: Request):
                     [InlineKeyboardButton("💳 Complete Payment", url=pay_url)],
                     [InlineKeyboardButton("💬 Manual Verification / Contact Support", url=f"https://t.me/{ADMIN_USERNAME}")]
                 ])
+                
+                checkout_text = (
+                    f"<b>Checkout Summary:</b>\n"
+                    f"Channel: <b>{channel_title}</b>\n"
+                    f"Plan: <b>{plan['label']}</b>\n"
+                    f"Estimated Local Total: <b>{rate_info['symbol']}{total_local:,.2f}</b>\n\n"
+                    f"📌 <b>IMPORTANT PAYMENT INSTRUCTION:</b>\n"
+                    f"After tapping <b>'💳 Complete Payment'</b> below, click the <b>three dots (⋮)</b> in the top right corner of your screen and select <b>'Open in Browser'</b> (Chrome, Safari, etc.) before completing payment to ensure immediate redirection back to Telegram!\n\n"
+                    f"Click below to proceed:"
+                )
+                
                 await bot.send_message(
                     chat_id=chat_id,
-                    text=(
-                        f"<b>Checkout Summary:</b>\n"
-                        f"Channel: <b>{channel_title}</b>\n"
-                        f"Plan: <b>{plan['label']}</b>\n"
-                        f"Estimated Local Total: <b>{rate_info['symbol']}{total_local:,.2f}</b>\n\n"
-                        "Click below to make payment or reach out for manual verification:"
-                    ),
+                    text=checkout_text,
                     parse_mode="HTML",
                     reply_markup=btn
                 )
@@ -345,7 +345,7 @@ async def paystack_webhook(request: Request):
                 expire_date=expire_timestamp
             )
             
-            # Save or update subscriber record in MongoDB Atlas
+            # Save or update subscriber record in MongoDB Atlas database
             if db is not None:
                 db.subscribers.update_one(
                     {"telegram_id": telegram_id, "channel": channel_type},
@@ -361,7 +361,7 @@ async def paystack_webhook(request: Request):
                     upsert=True
                 )
                 
-            # Send single-use link directly to user
+            # Send single-use link directly to user in their DM with @JayEmpire_bot
             await bot.send_message(
                 chat_id=telegram_id,
                 text=(
