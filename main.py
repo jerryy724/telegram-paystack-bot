@@ -17,7 +17,10 @@ GOLD_CHANNEL_ID = os.getenv("GOLD_CHANNEL_ID")
 ADMIN_USERNAME = "jay_empire247"
 BOT_USERNAME = "JayEmpire_bot"
 
-# PRICING CONFIGURATION (USD BASE)
+# RENDER LIVE DOMAIN FOR AUTOMATIC TELEGRAM WEBHOOK REGISTRATION
+RENDER_EXTERNAL_URL = os.getenv("RENDER_EXTERNAL_URL", "https://jay-empire-bot.onrender.com")
+
+# PRICING CONFIGURATION (USD BASE) - APPLIES TO ALL PACKAGES
 PRICING_USD = {
     "1_day_test": {"label": "🧪 1-Day Test (0.10 GHS)", "usd": 0.01, "days": 1, "is_test": True},
     "1_month": {"label": "1 Month ($15)", "usd": 15, "days": 30, "is_test": False},
@@ -26,11 +29,15 @@ PRICING_USD = {
     "lifetime": {"label": "Lifetime VIP ($250)", "usd": 250, "days": 36500, "is_test": False}
 }
 
-# LIVE EXCHANGE RATE STORAGE (FALLBACK DEFAULTS)
+# LIVE EXCHANGE RATE STORAGE (FALLBACK DEFAULTS INCLUDED)
 LIVE_EXCHANGE_RATES = {
     "GHS": {"rate": 15.50, "symbol": "GHS ", "multiplier": 100},
     "NGN": {"rate": 1600.0, "symbol": "₦", "multiplier": 100},
     "KES": {"rate": 130.0, "symbol": "KSh ", "multiplier": 100},
+    "ZAR": {"rate": 18.50, "symbol": "R ", "multiplier": 100},
+    "XOF": {"rate": 600.0, "symbol": "CFA ", "multiplier": 100},
+    "RWF": {"rate": 1350.0, "symbol": "FRw ", "multiplier": 100},
+    "EGP": {"rate": 48.50, "symbol": "E£ ", "multiplier": 100},
     "USD": {"rate": 1.0, "symbol": "$", "multiplier": 100}
 }
 
@@ -49,30 +56,28 @@ mongo_client = MongoClient(MONGO_URI) if MONGO_URI else None
 db = mongo_client["telegram_bot_db"] if mongo_client else None
 
 # ==============================================================================
-# 1. LIVE EXCHANGE RATE FETCHING TASK
+# 1. LIVE FOREX RATE FETCHING TASK
 # ==============================================================================
 async def update_live_exchange_rates():
-    """Fetches real-time market conversion rates for GHS, NGN, KES every hour."""
+    """Fetches real-time conversion rates for all Paystack African markets hourly."""
     global LIVE_EXCHANGE_RATES
     async with httpx.AsyncClient() as client:
         try:
             res = await client.get("https://open.er-api.com/v6/latest/USD", timeout=10.0)
             if res.status_code == 200:
                 rates = res.json().get("rates", {})
-                if "GHS" in rates:
-                    LIVE_EXCHANGE_RATES["GHS"]["rate"] = rates["GHS"]
-                if "NGN" in rates:
-                    LIVE_EXCHANGE_RATES["NGN"]["rate"] = rates["NGN"]
-                if "KES" in rates:
-                    LIVE_EXCHANGE_RATES["KES"]["rate"] = rates["KES"]
+                for curr in ["GHS", "NGN", "KES", "ZAR", "XOF", "RWF", "EGP"]:
+                    if curr in rates:
+                        LIVE_EXCHANGE_RATES[curr]["rate"] = rates[curr]
+                print("✅ Successfully updated live African currency exchange rates.")
         except Exception as e:
             print(f"Failed to fetch live forex rates: {e}")
 
 # ==============================================================================
-# 2. AUTOMATED EXPIRATION & REMINDER LOOP
+# 2. AUTOMATED SUBSCRIPTION LIFECYCLE TASK
 # ==============================================================================
 async def auto_subscription_checker():
-    """Runs continuously in background to handle live rates, reminders, and removals."""
+    """Runs continuously in background for live rates, reminders, and user removal."""
     while True:
         try:
             await update_live_exchange_rates()
@@ -81,7 +86,7 @@ async def auto_subscription_checker():
                 now = datetime.utcnow()
                 three_days_from_now = now + timedelta(days=3)
                 
-                # 3-Day Reminders
+                # 1. Send 3-Day Renewal Warnings
                 impending_expirations = db.subscribers.find({
                     "expires_at": {"$lte": three_days_from_now, "$gt": now},
                     "reminder_sent": {"$ne": True},
@@ -95,7 +100,7 @@ async def auto_subscription_checker():
                         renew_btn = InlineKeyboardMarkup([[InlineKeyboardButton("💳 Renew Subscription", callback_data="back_main")]])
                         await bot.send_message(
                             chat_id=user_id,
-                            text=f"⚠️ <b>Reminder:</b> Your subscription for <b>{channel_title}</b> expires in 3 days. Run /start to renew!",
+                            text=f"⚠️ <b>Reminder:</b> Your access to <b>{channel_title}</b> expires in 3 days. Send /start to renew your plan!",
                             parse_mode="HTML",
                             reply_markup=renew_btn
                         )
@@ -103,7 +108,7 @@ async def auto_subscription_checker():
                     except Exception as e:
                         print(f"Reminder error for {user_id}: {e}")
 
-                # Expired Members Removal
+                # 2. Auto-Kick Expired Subscribers
                 expired_users = db.subscribers.find({"expires_at": {"$lte": now}, "is_active": True})
                 for sub in expired_users:
                     user_id = sub["telegram_id"]
@@ -118,7 +123,7 @@ async def auto_subscription_checker():
                         renew_btn = InlineKeyboardMarkup([[InlineKeyboardButton("🔄 Rejoin VIP Channel", callback_data="back_main")]])
                         await bot.send_message(
                             chat_id=user_id,
-                            text=f"🔴 Your access period for <b>{channel_title}</b> has expired. Click below anytime to rejoin.",
+                            text=f"🔴 Your subscription for <b>{channel_title}</b> has officially ended. Click below anytime to rejoin.",
                             parse_mode="HTML",
                             reply_markup=renew_btn
                         )
@@ -132,8 +137,19 @@ async def auto_subscription_checker():
             
         await asyncio.sleep(3600)
 
+# ==============================================================================
+# FASTAPI LIFESPAN
+# ==============================================================================
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    if bot:
+        webhook_url = f"{RENDER_EXTERNAL_URL}/telegram-webhook"
+        try:
+            await bot.set_webhook(url=webhook_url)
+            print(f"✅ Telegram Webhook registered to: {webhook_url}")
+        except Exception as e:
+            print(f"❌ Failed to set Telegram Webhook: {e}")
+            
     task = asyncio.create_task(auto_subscription_checker())
     yield
     task.cancel()
@@ -154,12 +170,11 @@ async def telegram_webhook(request: Request):
             
             if text.startswith("/start"):
                 if "success" in text:
-                    # Give Webhook time to settle or poll immediately
                     sub = db.subscribers.find_one({"telegram_id": chat_id, "is_active": True}) if db is not None else None
                     
                     if sub and sub.get("invite_link"):
                         channel_title = "JAY FX PREMIUM SIGNALS" if sub["channel"] == "fx" else "JAY GOLD MASTER VIP"
-                        join_btn = InlineKeyboardMarkup([[InlineKeyboardButton("🚀 Join Channel Now", url=sub["invite_link"])]])
+                        join_btn = InlineKeyboardMarkup([[InlineKeyboardButton(f"🚀 Join {channel_title}", url=sub["invite_link"])]])
                         await bot.send_message(
                             chat_id=chat_id,
                             text=f"🎉 <b>CONGRATULATIONS! PAYMENT CONFIRMED!</b>\n\nYou have successfully subscribed to <b>{channel_title}</b>. Click below to enter immediately:",
@@ -171,16 +186,16 @@ async def telegram_webhook(request: Request):
                     check_btn = InlineKeyboardMarkup([[InlineKeyboardButton("🔄 Refresh My Access Link", callback_data="check_active_sub")]])
                     await bot.send_message(
                         chat_id=chat_id,
-                        text="🎉 <b>Welcome back! Payment Received.</b>\n\nYour account is being activated. Click below to retrieve your access link:",
+                        text="🎉 <b>Welcome back! Payment Received.</b>\n\nYour account is activating. Click below to retrieve your direct invite link:",
                         parse_mode="HTML",
                         reply_markup=check_btn
                     )
                     return {"status": "ok"}
 
-                # Standard /start Command
+                # Standard /start command main menu
                 keyboard = [
-                    [InlineKeyboardButton("📈 JAY FX PREMIUM SIGNALS", callback_data="terms_fx")],
-                    [InlineKeyboardButton("🪙 JAY GOLD MASTER VIP", callback_data="terms_gold")],
+                    [InlineKeyboardButton("📈 JAY FX PREMIUM SIGNALS", callback_data="terms:fx")],
+                    [InlineKeyboardButton("🪙 JAY GOLD MASTER VIP", callback_data="terms:gold")],
                     [InlineKeyboardButton("🛠️ Request a Service", callback_data="menu_services")]
                 ]
                 await bot.send_message(
@@ -196,17 +211,17 @@ async def telegram_webhook(request: Request):
             chat_id = query["message"]["chat"]["id"]
             action = query["data"]
             
-            # ACKNOWLEDGE CALLBACK IMMEDIATELY TO UNFREEZE BOT UI
+            # ACKNOWLEDGE CALLBACK IMMEDIATELY TO KEEP UI ULTRA-FAST
             try:
                 await bot.answer_callback_query(callback_query_id=query_id)
-            except Exception as cb_err:
-                print(f"Callback answer error: {cb_err}")
+            except Exception:
+                pass
             
             if action == "check_active_sub":
                 sub = db.subscribers.find_one({"telegram_id": chat_id, "is_active": True}) if db is not None else None
                 if sub and sub.get("invite_link"):
                     channel_title = "JAY FX PREMIUM SIGNALS" if sub["channel"] == "fx" else "JAY GOLD MASTER VIP"
-                    join_btn = InlineKeyboardMarkup([[InlineKeyboardButton("🚀 Join Channel Now", url=sub["invite_link"])]])
+                    join_btn = InlineKeyboardMarkup([[InlineKeyboardButton(f"🚀 Join {channel_title}", url=sub["invite_link"])]])
                     await bot.send_message(
                         chat_id=chat_id,
                         text=f"🎉 <b>Subscription Active!</b>\n\nWelcome to <b>{channel_title}</b>:",
@@ -216,42 +231,43 @@ async def telegram_webhook(request: Request):
                 else:
                     await bot.send_message(
                         chat_id=chat_id,
-                        text="⏳ Payment confirmation in progress with Paystack. Please wait 5 seconds and click the button again.",
+                        text="⏳ Payment confirmation in progress with Paystack. Please wait 5 seconds and tap the button again.",
                         parse_mode="HTML"
                     )
 
-            elif action in ["terms_fx", "terms_gold"]:
-                target_prefix = "fx" if action == "terms_fx" else "gold"
+            elif action.startswith("terms:"):
+                target_prefix = action.split(":")[1]
                 keyboard = [
-                    [InlineKeyboardButton("✅ I Agree & Proceed", callback_data=f"curr_{target_prefix}")],
+                    [InlineKeyboardButton("✅ I Agree & Proceed", callback_data=f"curr:{target_prefix}")],
                     [InlineKeyboardButton("❌ Decline / Back", callback_data="back_main")]
                 ]
                 await bot.send_message(chat_id=chat_id, text=TERMS_TEXT, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
 
-            elif action in ["curr_fx", "curr_gold"]:
-                prefix = "fx" if action == "curr_fx" else "gold"
+            elif action.startswith("curr:"):
+                prefix = action.split(":")[1]
                 keyboard = [
-                    [InlineKeyboardButton("🇬🇭 Ghana (GHS / MoMo / Card)", callback_data=f"plan_{prefix}_GHS")],
-                    [InlineKeyboardButton("🇳🇬 Nigeria (NGN / Transfer / Card)", callback_data=f"plan_{prefix}_NGN")],
-                    [InlineKeyboardButton("🇰🇪 Kenya (KES / M-Pesa / Card)", callback_data=f"plan_{prefix}_KES")],
-                    [InlineKeyboardButton("🌍 International (USD / Cards)", callback_data=f"plan_{prefix}_GHS")],
+                    [InlineKeyboardButton("🇬🇭 Ghana (GHS / MoMo / Card)", callback_data=f"plan:{prefix}:GHS")],
+                    [InlineKeyboardButton("🇳🇬 Nigeria (NGN / Transfer / Card)", callback_data=f"plan:{prefix}:NGN")],
+                    [InlineKeyboardButton("🇰🇪 Kenya (KES / M-Pesa / Card)", callback_data=f"plan:{prefix}:KES")],
+                    [InlineKeyboardButton("🇿🇦 South Africa (ZAR / Card / EFT)", callback_data=f"plan:{prefix}:ZAR")],
+                    [InlineKeyboardButton("🇨🇮 Côte d'Ivoire (XOF / MoMo / Card)", callback_data=f"plan:{prefix}:XOF")],
+                    [InlineKeyboardButton("🇷🇼 Rwanda (RWF / MoMo / Card)", callback_data=f"plan:{prefix}:RWF")],
+                    [InlineKeyboardButton("🇪🇬 Egypt (EGP / Card / Wallets)", callback_data=f"plan:{prefix}:EGP")],
+                    [InlineKeyboardButton("🌍 Rest of Africa / Global (USD Cards)", callback_data=f"plan:{prefix}:USD")],
                     [InlineKeyboardButton("⬅️ Back to Main Menu", callback_data="back_main")]
                 ]
                 await bot.send_message(chat_id=chat_id, text="<b>Select your billing region or currency:</b>", parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
 
-            elif action.startswith("plan_"):
-                parts = action.split("_")
-                prefix = parts[1]
-                curr = parts[2]
-                
+            elif action.startswith("plan:"):
+                _, prefix, curr = action.split(":")
                 channel_name = "JAY FX PREMIUM SIGNALS" if prefix == "fx" else "JAY GOLD MASTER VIP"
                 
                 keyboard = [
-                    [InlineKeyboardButton(PRICING_USD["1_day_test"]["label"], callback_data=f"buy_{prefix}_1_day_test_{curr}")],
-                    [InlineKeyboardButton(PRICING_USD["1_month"]["label"], callback_data=f"buy_{prefix}_1_month_{curr}")],
-                    [InlineKeyboardButton(PRICING_USD["6_months"]["label"], callback_data=f"buy_{prefix}_6_months_{curr}")],
-                    [InlineKeyboardButton(PRICING_USD["1_year"]["label"], callback_data=f"buy_{prefix}_1_year_{curr}")],
-                    [InlineKeyboardButton(PRICING_USD["lifetime"]["label"], callback_data=f"buy_{prefix}_lifetime_{curr}")],
+                    [InlineKeyboardButton(PRICING_USD["1_day_test"]["label"], callback_data=f"buy:{prefix}:1_day_test:{curr}")],
+                    [InlineKeyboardButton(PRICING_USD["1_month"]["label"], callback_data=f"buy:{prefix}:1_month:{curr}")],
+                    [InlineKeyboardButton(PRICING_USD["6_months"]["label"], callback_data=f"buy:{prefix}:6_months:{curr}")],
+                    [InlineKeyboardButton(PRICING_USD["1_year"]["label"], callback_data=f"buy:{prefix}:1_year:{curr}")],
+                    [InlineKeyboardButton(PRICING_USD["lifetime"]["label"], callback_data=f"buy:{prefix}:lifetime:{curr}")],
                     [InlineKeyboardButton("⬅️ Back to Main Menu", callback_data="back_main")]
                 ]
                 await bot.send_message(chat_id=chat_id, text=f"Select duration for <b>{channel_name}</b> ({curr}):", parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
@@ -270,22 +286,14 @@ async def telegram_webhook(request: Request):
 
             elif action == "back_main":
                 keyboard = [
-                    [InlineKeyboardButton("📈 JAY FX PREMIUM SIGNALS", callback_data="terms_fx")],
-                    [InlineKeyboardButton("🪙 JAY GOLD MASTER VIP", callback_data="terms_gold")],
+                    [InlineKeyboardButton("📈 JAY FX PREMIUM SIGNALS", callback_data="terms:fx")],
+                    [InlineKeyboardButton("🪙 JAY GOLD MASTER VIP", callback_data="terms:gold")],
                     [InlineKeyboardButton("🛠️ Request a Service", callback_data="menu_services")]
                 ]
                 await bot.send_message(chat_id=chat_id, text="<b>Jay Empire Main Menu:</b>", parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
 
-            elif action.startswith("buy_"):
-                parts = action.split("_")
-                channel_type = parts[1]
-                
-                if "1_day_test" in action:
-                    plan_key = "1_day_test"
-                    curr = parts[5]
-                else:
-                    plan_key = f"{parts[2]}_{parts[3]}"
-                    curr = parts[4]
+            elif action.startswith("buy:"):
+                _, channel_type, plan_key, curr = action.split(":")
                 
                 plan = PRICING_USD[plan_key]
                 rate_info = LIVE_EXCHANGE_RATES.get(curr, LIVE_EXCHANGE_RATES["GHS"])
