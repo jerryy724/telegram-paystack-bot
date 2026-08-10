@@ -20,7 +20,7 @@ BOT_USERNAME = "JayEmpire_bot"
 # RENDER LIVE DOMAIN FOR AUTOMATIC TELEGRAM WEBHOOK REGISTRATION
 RENDER_EXTERNAL_URL = os.getenv("RENDER_EXTERNAL_URL", "https://jay-empire-bot.onrender.com")
 
-# PRICING CONFIGURATION (USD BASE) - APPLIES TO ALL PACKAGES
+# PRICING CONFIGURATION (USD BASE)
 PRICING_USD = {
     "1_day_test": {"label": "🧪 1-Day Test (0.10 GHS)", "usd": 0.01, "days": 1, "is_test": True},
     "1_month": {"label": "1 Month ($15)", "usd": 15, "days": 30, "is_test": False},
@@ -52,7 +52,15 @@ TERMS_TEXT = (
 )
 
 bot = Bot(token=BOT_TOKEN) if BOT_TOKEN else None
-mongo_client = MongoClient(MONGO_URI) if MONGO_URI else None
+
+# MONGO CLIENT WITH ROBUST SSL HANDSHAKE FIX
+mongo_client = MongoClient(
+    MONGO_URI,
+    tls=True,
+    tlsAllowInvalidCertificates=True,
+    serverSelectionTimeoutMS=5000
+) if MONGO_URI else None
+
 db = mongo_client["telegram_bot_db"] if mongo_client else None
 
 # ==============================================================================
@@ -211,7 +219,6 @@ async def telegram_webhook(request: Request):
             chat_id = query["message"]["chat"]["id"]
             action = query["data"]
             
-            # ACKNOWLEDGE CALLBACK IMMEDIATELY TO KEEP UI ULTRA-FAST
             try:
                 await bot.answer_callback_query(callback_query_id=query_id)
             except Exception:
@@ -321,7 +328,7 @@ async def telegram_webhook(request: Request):
                     "metadata": {
                         "telegram_id": chat_id,
                         "channel_type": channel_type,
-                        "days": plan["days"]
+                        "days": int(plan["days"])  # ENFORCED INTEGER CONVERSION
                     }
                 }
                 
@@ -365,7 +372,13 @@ async def paystack_webhook(request: Request):
             meta = payload["data"].get("metadata", {})
             telegram_id = meta.get("telegram_id")
             channel_type = meta.get("channel_type")
-            days = meta.get("days", 30)
+            days_raw = meta.get("days", 30)
+            
+            # CONVERT TO INTEGER TO PREVENT TIMEDELTA CRASHES
+            try:
+                days = int(days_raw)
+            except Exception:
+                days = 30
             
             if telegram_id and channel_type:
                 target_channel = FOREX_CHANNEL_ID if channel_type == "fx" else GOLD_CHANNEL_ID
@@ -381,9 +394,9 @@ async def paystack_webhook(request: Request):
                 
                 if db is not None:
                     db.subscribers.update_one(
-                        {"telegram_id": telegram_id, "channel": channel_type},
+                        {"telegram_id": int(telegram_id), "channel": channel_type},
                         {"$set": {
-                            "telegram_id": telegram_id,
+                            "telegram_id": int(telegram_id),
                             "channel": channel_type,
                             "days": days,
                             "invite_link": invite_url,
