@@ -26,7 +26,7 @@ PRICING_USD = {
     "lifetime": {"label": "Lifetime VIP ($250)", "usd": 250, "days": 36500, "is_test": False}
 }
 
-# LIVE EXCHANGE RATE STORAGE (FALLBACK DEFAULTS INCLUDED)
+# LIVE EXCHANGE RATE STORAGE (FALLBACK DEFAULTS)
 LIVE_EXCHANGE_RATES = {
     "GHS": {"rate": 15.50, "symbol": "GHS ", "multiplier": 100},
     "NGN": {"rate": 1600.0, "symbol": "₦", "multiplier": 100},
@@ -56,7 +56,7 @@ async def update_live_exchange_rates():
     global LIVE_EXCHANGE_RATES
     async with httpx.AsyncClient() as client:
         try:
-            res = await client.get("https://open.er-api.com/v6/latest/USD")
+            res = await client.get("https://open.er-api.com/v6/latest/USD", timeout=10.0)
             if res.status_code == 200:
                 rates = res.json().get("rates", {})
                 if "GHS" in rates:
@@ -65,7 +65,6 @@ async def update_live_exchange_rates():
                     LIVE_EXCHANGE_RATES["NGN"]["rate"] = rates["NGN"]
                 if "KES" in rates:
                     LIVE_EXCHANGE_RATES["KES"]["rate"] = rates["KES"]
-                print(f"Updated Rates: GHS={rates.get('GHS')}, NGN={rates.get('NGN')}, KES={rates.get('KES')}")
         except Exception as e:
             print(f"Failed to fetch live forex rates: {e}")
 
@@ -76,7 +75,6 @@ async def auto_subscription_checker():
     """Runs continuously in background to handle live rates, reminders, and removals."""
     while True:
         try:
-            # Refresh Rates
             await update_live_exchange_rates()
             
             if db is not None and bot is not None:
@@ -147,186 +145,203 @@ app = FastAPI(lifespan=lifespan)
 # ==============================================================================
 @app.post("/telegram-webhook")
 async def telegram_webhook(request: Request):
-    data = await request.json()
-    
-    if "message" in data:
-        chat_id = data["message"]["chat"]["id"]
-        text = data["message"].get("text", "")
+    try:
+        data = await request.json()
         
-        if text.startswith("/start"):
-            if "success" in text:
+        if "message" in data:
+            chat_id = data["message"]["chat"]["id"]
+            text = data["message"].get("text", "")
+            
+            if text.startswith("/start"):
+                if "success" in text:
+                    # Give Webhook time to settle or poll immediately
+                    sub = db.subscribers.find_one({"telegram_id": chat_id, "is_active": True}) if db is not None else None
+                    
+                    if sub and sub.get("invite_link"):
+                        channel_title = "JAY FX PREMIUM SIGNALS" if sub["channel"] == "fx" else "JAY GOLD MASTER VIP"
+                        join_btn = InlineKeyboardMarkup([[InlineKeyboardButton("🚀 Join Channel Now", url=sub["invite_link"])]])
+                        await bot.send_message(
+                            chat_id=chat_id,
+                            text=f"🎉 <b>CONGRATULATIONS! PAYMENT CONFIRMED!</b>\n\nYou have successfully subscribed to <b>{channel_title}</b>. Click below to enter immediately:",
+                            parse_mode="HTML",
+                            reply_markup=join_btn
+                        )
+                        return {"status": "ok"}
+                    
+                    check_btn = InlineKeyboardMarkup([[InlineKeyboardButton("🔄 Refresh My Access Link", callback_data="check_active_sub")]])
+                    await bot.send_message(
+                        chat_id=chat_id,
+                        text="🎉 <b>Welcome back! Payment Received.</b>\n\nYour account is being activated. Click below to retrieve your access link:",
+                        parse_mode="HTML",
+                        reply_markup=check_btn
+                    )
+                    return {"status": "ok"}
+
+                # Standard /start Command
+                keyboard = [
+                    [InlineKeyboardButton("📈 JAY FX PREMIUM SIGNALS", callback_data="terms_fx")],
+                    [InlineKeyboardButton("🪙 JAY GOLD MASTER VIP", callback_data="terms_gold")],
+                    [InlineKeyboardButton("🛠️ Request a Service", callback_data="menu_services")]
+                ]
+                await bot.send_message(
+                    chat_id=chat_id,
+                    text="<b>Welcome to Jay Empire! 🚀</b>\n\nSelect an option below to proceed:",
+                    parse_mode="HTML",
+                    reply_markup=InlineKeyboardMarkup(keyboard)
+                )
+
+        elif "callback_query" in data:
+            query = data["callback_query"]
+            query_id = query["id"]
+            chat_id = query["message"]["chat"]["id"]
+            action = query["data"]
+            
+            # ACKNOWLEDGE CALLBACK IMMEDIATELY TO UNFREEZE BOT UI
+            try:
+                await bot.answer_callback_query(callback_query_id=query_id)
+            except Exception as cb_err:
+                print(f"Callback answer error: {cb_err}")
+            
+            if action == "check_active_sub":
                 sub = db.subscribers.find_one({"telegram_id": chat_id, "is_active": True}) if db is not None else None
                 if sub and sub.get("invite_link"):
                     channel_title = "JAY FX PREMIUM SIGNALS" if sub["channel"] == "fx" else "JAY GOLD MASTER VIP"
                     join_btn = InlineKeyboardMarkup([[InlineKeyboardButton("🚀 Join Channel Now", url=sub["invite_link"])]])
                     await bot.send_message(
                         chat_id=chat_id,
-                        text=f"🎉 <b>Congratulations! Payment Verified!</b>\n\nYou have joined <b>{channel_title}</b>.",
+                        text=f"🎉 <b>Subscription Active!</b>\n\nWelcome to <b>{channel_title}</b>:",
                         parse_mode="HTML",
                         reply_markup=join_btn
                     )
-                    return {"status": "ok"}
+                else:
+                    await bot.send_message(
+                        chat_id=chat_id,
+                        text="⏳ Payment confirmation in progress with Paystack. Please wait 5 seconds and click the button again.",
+                        parse_mode="HTML"
+                    )
+
+            elif action in ["terms_fx", "terms_gold"]:
+                target_prefix = "fx" if action == "terms_fx" else "gold"
+                keyboard = [
+                    [InlineKeyboardButton("✅ I Agree & Proceed", callback_data=f"curr_{target_prefix}")],
+                    [InlineKeyboardButton("❌ Decline / Back", callback_data="back_main")]
+                ]
+                await bot.send_message(chat_id=chat_id, text=TERMS_TEXT, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
+
+            elif action in ["curr_fx", "curr_gold"]:
+                prefix = "fx" if action == "curr_fx" else "gold"
+                keyboard = [
+                    [InlineKeyboardButton("🇬🇭 Ghana (GHS / MoMo / Card)", callback_data=f"plan_{prefix}_GHS")],
+                    [InlineKeyboardButton("🇳🇬 Nigeria (NGN / Transfer / Card)", callback_data=f"plan_{prefix}_NGN")],
+                    [InlineKeyboardButton("🇰🇪 Kenya (KES / M-Pesa / Card)", callback_data=f"plan_{prefix}_KES")],
+                    [InlineKeyboardButton("🌍 International (USD / Cards)", callback_data=f"plan_{prefix}_GHS")],
+                    [InlineKeyboardButton("⬅️ Back to Main Menu", callback_data="back_main")]
+                ]
+                await bot.send_message(chat_id=chat_id, text="<b>Select your billing region or currency:</b>", parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
+
+            elif action.startswith("plan_"):
+                parts = action.split("_")
+                prefix = parts[1]
+                curr = parts[2]
                 
-                check_btn = InlineKeyboardMarkup([[InlineKeyboardButton("🔄 Refresh My Access Link", callback_data="check_active_sub")]])
-                await bot.send_message(
-                    chat_id=chat_id,
-                    text="🎉 <b>Welcome back! Payment Received.</b>\n\nClick below to retrieve your invite link:",
-                    parse_mode="HTML",
-                    reply_markup=check_btn
-                )
-                return {"status": "ok"}
+                channel_name = "JAY FX PREMIUM SIGNALS" if prefix == "fx" else "JAY GOLD MASTER VIP"
+                
+                keyboard = [
+                    [InlineKeyboardButton(PRICING_USD["1_day_test"]["label"], callback_data=f"buy_{prefix}_1_day_test_{curr}")],
+                    [InlineKeyboardButton(PRICING_USD["1_month"]["label"], callback_data=f"buy_{prefix}_1_month_{curr}")],
+                    [InlineKeyboardButton(PRICING_USD["6_months"]["label"], callback_data=f"buy_{prefix}_6_months_{curr}")],
+                    [InlineKeyboardButton(PRICING_USD["1_year"]["label"], callback_data=f"buy_{prefix}_1_year_{curr}")],
+                    [InlineKeyboardButton(PRICING_USD["lifetime"]["label"], callback_data=f"buy_{prefix}_lifetime_{curr}")],
+                    [InlineKeyboardButton("⬅️ Back to Main Menu", callback_data="back_main")]
+                ]
+                await bot.send_message(chat_id=chat_id, text=f"Select duration for <b>{channel_name}</b> ({curr}):", parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
 
-            keyboard = [
-                [InlineKeyboardButton("📈 JAY FX PREMIUM SIGNALS", callback_data="terms_fx")],
-                [InlineKeyboardButton("🪙 JAY GOLD MASTER VIP", callback_data="terms_gold")],
-                [InlineKeyboardButton("🛠️ Request a Service", callback_data="menu_services")]
-            ]
-            await bot.send_message(
-                chat_id=chat_id,
-                text="<b>Welcome to Jay Empire! 🚀</b>\n\nSelect an option below to proceed:",
-                parse_mode="HTML",
-                reply_markup=InlineKeyboardMarkup(keyboard)
-            )
+            elif action == "menu_services":
+                profile_url = f"https://t.me/{ADMIN_USERNAME}"
+                keyboard = [
+                    [InlineKeyboardButton("🎨 Graphic Design", url=profile_url)],
+                    [InlineKeyboardButton("🎬 Video Editing", url=profile_url)],
+                    [InlineKeyboardButton("📱 Bulk SMS Marketing", url=profile_url)],
+                    [InlineKeyboardButton("🧠 Brand Digital Mentorship", url=profile_url)],
+                    [InlineKeyboardButton("❓ Others / Custom Inquiries", url=profile_url)],
+                    [InlineKeyboardButton("⬅️ Back to Main Menu", callback_data="back_main")]
+                ]
+                await bot.send_message(chat_id=chat_id, text="Choose a service to chat directly with support:", reply_markup=InlineKeyboardMarkup(keyboard))
 
-    elif "callback_query" in data:
-        query = data["callback_query"]
-        chat_id = query["message"]["chat"]["id"]
-        action = query["data"]
-        
-        if action == "check_active_sub":
-            sub = db.subscribers.find_one({"telegram_id": chat_id, "is_active": True}) if db is not None else None
-            if sub and sub.get("invite_link"):
-                channel_title = "JAY FX PREMIUM SIGNALS" if sub["channel"] == "fx" else "JAY GOLD MASTER VIP"
-                join_btn = InlineKeyboardMarkup([[InlineKeyboardButton("🚀 Join Channel Now", url=sub["invite_link"])]])
-                await bot.send_message(
-                    chat_id=chat_id,
-                    text=f"🎉 <b>Subscription Active!</b>\n\nWelcome to <b>{channel_title}</b>:",
-                    parse_mode="HTML",
-                    reply_markup=join_btn
-                )
-            else:
-                await bot.send_message(chat_id=chat_id, text="⏳ Finalizing with Paystack... Try clicking again in 5 seconds.")
+            elif action == "back_main":
+                keyboard = [
+                    [InlineKeyboardButton("📈 JAY FX PREMIUM SIGNALS", callback_data="terms_fx")],
+                    [InlineKeyboardButton("🪙 JAY GOLD MASTER VIP", callback_data="terms_gold")],
+                    [InlineKeyboardButton("🛠️ Request a Service", callback_data="menu_services")]
+                ]
+                await bot.send_message(chat_id=chat_id, text="<b>Jay Empire Main Menu:</b>", parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
 
-        elif action in ["terms_fx", "terms_gold"]:
-            target_prefix = "fx" if action == "terms_fx" else "gold"
-            keyboard = [
-                [InlineKeyboardButton("✅ I Agree & Proceed", callback_data=f"curr_{target_prefix}")],
-                [InlineKeyboardButton("❌ Decline / Back", callback_data="back_main")]
-            ]
-            await bot.send_message(chat_id=chat_id, text=TERMS_TEXT, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
-
-        elif action in ["curr_fx", "curr_gold"]:
-            prefix = "fx" if action == "curr_fx" else "gold"
-            keyboard = [
-                [InlineKeyboardButton("🇬🇭 Ghana (GHS / MoMo / Card)", callback_data=f"plan_{prefix}_GHS")],
-                [InlineKeyboardButton("🇳🇬 Nigeria (NGN / Transfer / Card)", callback_data=f"plan_{prefix}_NGN")],
-                [InlineKeyboardButton("🇰🇪 Kenya (KES / M-Pesa / Card)", callback_data=f"plan_{prefix}_KES")],
-                [InlineKeyboardButton("🌍 International (USD / Cards)", callback_data=f"plan_{prefix}_GHS")],
-                [InlineKeyboardButton("⬅️ Back to Main Menu", callback_data="back_main")]
-            ]
-            await bot.send_message(chat_id=chat_id, text="<b>Select your billing region or currency:</b>", parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
-
-        elif action.startswith("plan_"):
-            parts = action.split("_")
-            prefix = parts[1]
-            curr = parts[2]
-            
-            channel_name = "JAY FX PREMIUM SIGNALS" if prefix == "fx" else "JAY GOLD MASTER VIP"
-            
-            keyboard = [
-                [InlineKeyboardButton(PRICING_USD["1_day_test"]["label"], callback_data=f"buy_{prefix}_1_day_test_{curr}")],
-                [InlineKeyboardButton(PRICING_USD["1_month"]["label"], callback_data=f"buy_{prefix}_1_month_{curr}")],
-                [InlineKeyboardButton(PRICING_USD["6_months"]["label"], callback_data=f"buy_{prefix}_6_months_{curr}")],
-                [InlineKeyboardButton(PRICING_USD["1_year"]["label"], callback_data=f"buy_{prefix}_1_year_{curr}")],
-                [InlineKeyboardButton(PRICING_USD["lifetime"]["label"], callback_data=f"buy_{prefix}_lifetime_{curr}")],
-                [InlineKeyboardButton("⬅️ Back to Main Menu", callback_data="back_main")]
-            ]
-            await bot.send_message(chat_id=chat_id, text=f"Select duration for <b>{channel_name}</b> ({curr}):", parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
-
-        elif action == "menu_services":
-            profile_url = f"https://t.me/{ADMIN_USERNAME}"
-            keyboard = [
-                [InlineKeyboardButton("🎨 Graphic Design", url=profile_url)],
-                [InlineKeyboardButton("🎬 Video Editing", url=profile_url)],
-                [InlineKeyboardButton("📱 Bulk SMS Marketing", url=profile_url)],
-                [InlineKeyboardButton("🧠 Brand Digital Mentorship", url=profile_url)],
-                [InlineKeyboardButton("❓ Others / Custom Inquiries", url=profile_url)],
-                [InlineKeyboardButton("⬅️ Back to Main Menu", callback_data="back_main")]
-            ]
-            await bot.send_message(chat_id=chat_id, text="Choose a service to chat directly with support:", reply_markup=InlineKeyboardMarkup(keyboard))
-
-        elif action == "back_main":
-            keyboard = [
-                [InlineKeyboardButton("📈 JAY FX PREMIUM SIGNALS", callback_data="terms_fx")],
-                [InlineKeyboardButton("🪙 JAY GOLD MASTER VIP", callback_data="terms_gold")],
-                [InlineKeyboardButton("🛠️ Request a Service", callback_data="menu_services")]
-            ]
-            await bot.send_message(chat_id=chat_id, text="<b>Jay Empire Main Menu:</b>", parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
-
-        elif action.startswith("buy_"):
-            parts = action.split("_")
-            channel_type = parts[1]
-            
-            if "1_day_test" in action:
-                plan_key = "1_day_test"
-                curr = parts[5]
-            else:
-                plan_key = f"{parts[2]}_{parts[3]}"
-                curr = parts[4]
-            
-            plan = PRICING_USD[plan_key]
-            rate_info = LIVE_EXCHANGE_RATES.get(curr, LIVE_EXCHANGE_RATES["GHS"])
-            
-            channel_title = "JAY FX PREMIUM SIGNALS" if channel_type == "fx" else "JAY GOLD MASTER VIP"
-            user_email = f"user_{chat_id}@jayempire.com"
-            
-            # Handle Test Mode Override (10 Pesewas = 10 Subunits)
-            if plan.get("is_test"):
-                amount_subunits = 10
-                total_local = 0.10
-            else:
-                total_local = plan["usd"] * rate_info["rate"]
-                amount_subunits = int(total_local * rate_info["multiplier"])
-            
-            headers = {
-                "Authorization": f"Bearer {PAYSTACK_SECRET_KEY}",
-                "Content-Type": "application/json"
-            }
-            
-            payload = {
-                "email": user_email,
-                "amount": amount_subunits,
-                "currency": "GHS",
-                "callback_url": f"https://t.me/{BOT_USERNAME}?start=success",
-                "metadata": {
-                    "telegram_id": chat_id,
-                    "channel_type": channel_type,
-                    "days": plan["days"]
+            elif action.startswith("buy_"):
+                parts = action.split("_")
+                channel_type = parts[1]
+                
+                if "1_day_test" in action:
+                    plan_key = "1_day_test"
+                    curr = parts[5]
+                else:
+                    plan_key = f"{parts[2]}_{parts[3]}"
+                    curr = parts[4]
+                
+                plan = PRICING_USD[plan_key]
+                rate_info = LIVE_EXCHANGE_RATES.get(curr, LIVE_EXCHANGE_RATES["GHS"])
+                
+                channel_title = "JAY FX PREMIUM SIGNALS" if channel_type == "fx" else "JAY GOLD MASTER VIP"
+                user_email = f"user_{chat_id}@jayempire.com"
+                
+                if plan.get("is_test"):
+                    amount_subunits = 10
+                    total_local = 0.10
+                else:
+                    total_local = plan["usd"] * rate_info["rate"]
+                    amount_subunits = int(total_local * rate_info["multiplier"])
+                
+                headers = {
+                    "Authorization": f"Bearer {PAYSTACK_SECRET_KEY}",
+                    "Content-Type": "application/json"
                 }
-            }
-            
-            async with httpx.AsyncClient() as client:
-                res = await client.post("https://api.paystack.co/transaction/initialize", json=payload, headers=headers)
-                res_data = res.json()
                 
-            if res_data.get("status"):
-                pay_url = res_data["data"]["authorization_url"]
-                btn = InlineKeyboardMarkup([
-                    [InlineKeyboardButton("💳 Complete Payment", url=pay_url)],
-                    [InlineKeyboardButton("💬 Manual Verification / Contact Support", url=f"https://t.me/{ADMIN_USERNAME}")]
-                ])
+                payload = {
+                    "email": user_email,
+                    "amount": amount_subunits,
+                    "currency": "GHS",
+                    "callback_url": f"https://t.me/{BOT_USERNAME}?start=success",
+                    "metadata": {
+                        "telegram_id": chat_id,
+                        "channel_type": channel_type,
+                        "days": plan["days"]
+                    }
+                }
                 
-                checkout_text = (
-                    f"<b>Checkout Summary:</b>\n"
-                    f"Channel: <b>{channel_title}</b>\n"
-                    f"Plan: <b>{plan['label']}</b>\n"
-                    f"Local Amount: <b>{rate_info['symbol']}{total_local:,.2f}</b>\n\n"
-                    f"📌 <b>IMPORTANT:</b> After tapping 'Complete Payment', click the <b>three dots (⋮)</b> in the top right corner and select <b>'Open in Browser'</b> before paying to ensure clean redirection back to Telegram!"
-                )
-                await bot.send_message(chat_id=chat_id, text=checkout_text, parse_mode="HTML", reply_markup=btn)
-            else:
-                error_msg = res_data.get("message", "Payment initialization failed.")
-                await bot.send_message(chat_id=chat_id, text=f"❌ Payment Error: <i>{error_msg}</i>", parse_mode="HTML")
+                async with httpx.AsyncClient() as client:
+                    res = await client.post("https://api.paystack.co/transaction/initialize", json=payload, headers=headers, timeout=15.0)
+                    res_data = res.json()
+                    
+                if res_data.get("status"):
+                    pay_url = res_data["data"]["authorization_url"]
+                    btn = InlineKeyboardMarkup([
+                        [InlineKeyboardButton("💳 Complete Payment", url=pay_url)],
+                        [InlineKeyboardButton("💬 Manual Verification / Contact Support", url=f"https://t.me/{ADMIN_USERNAME}")]
+                    ])
+                    
+                    checkout_text = (
+                        f"<b>Checkout Summary:</b>\n"
+                        f"Channel: <b>{channel_title}</b>\n"
+                        f"Plan: <b>{plan['label']}</b>\n"
+                        f"Local Amount: <b>{rate_info['symbol']}{total_local:,.2f}</b>\n\n"
+                        f"📌 <b>IMPORTANT:</b> After tapping 'Complete Payment', click the <b>three dots (⋮)</b> in the top right corner and select <b>'Open in Browser'</b> before paying to ensure clean redirection back to Telegram!"
+                    )
+                    await bot.send_message(chat_id=chat_id, text=checkout_text, parse_mode="HTML", reply_markup=btn)
+                else:
+                    error_msg = res_data.get("message", "Payment initialization failed.")
+                    await bot.send_message(chat_id=chat_id, text=f"❌ Payment Error: <i>{error_msg}</i>", parse_mode="HTML")
+
+    except Exception as global_err:
+        print(f"Error processing Telegram update: {global_err}")
 
     return {"status": "ok"}
 
@@ -335,49 +350,52 @@ async def telegram_webhook(request: Request):
 # ==============================================================================
 @app.post("/paystack-webhook")
 async def paystack_webhook(request: Request):
-    payload = await request.json()
-    
-    if payload.get("event") == "charge.success":
-        meta = payload["data"].get("metadata", {})
-        telegram_id = meta.get("telegram_id")
-        channel_type = meta.get("channel_type")
-        days = meta.get("days", 30)
+    try:
+        payload = await request.json()
         
-        if telegram_id and channel_type:
-            target_channel = FOREX_CHANNEL_ID if channel_type == "fx" else GOLD_CHANNEL_ID
-            channel_title = "JAY FX PREMIUM SIGNALS" if channel_type == "fx" else "JAY GOLD MASTER VIP"
+        if payload.get("event") == "charge.success":
+            meta = payload["data"].get("metadata", {})
+            telegram_id = meta.get("telegram_id")
+            channel_type = meta.get("channel_type")
+            days = meta.get("days", 30)
             
-            expire_timestamp = int((datetime.utcnow() + timedelta(hours=24)).timestamp())
-            created_invite = await bot.create_chat_invite_link(
-                chat_id=target_channel,
-                member_limit=1,
-                expire_date=expire_timestamp
-            )
-            invite_url = created_invite.invite_link
-            
-            if db is not None:
-                db.subscribers.update_one(
-                    {"telegram_id": telegram_id, "channel": channel_type},
-                    {"$set": {
-                        "telegram_id": telegram_id,
-                        "channel": channel_type,
-                        "days": days,
-                        "invite_link": invite_url,
-                        "joined_at": datetime.utcnow(),
-                        "expires_at": datetime.utcnow() + timedelta(days=days),
-                        "is_active": True,
-                        "reminder_sent": False
-                    }},
-                    upsert=True
-                )
+            if telegram_id and channel_type:
+                target_channel = FOREX_CHANNEL_ID if channel_type == "fx" else GOLD_CHANNEL_ID
+                channel_title = "JAY FX PREMIUM SIGNALS" if channel_type == "fx" else "JAY GOLD MASTER VIP"
                 
-            join_btn = InlineKeyboardMarkup([[InlineKeyboardButton(f"🚀 Join {channel_title}", url=invite_url)]])
-            await bot.send_message(
-                chat_id=telegram_id,
-                text=f"🎉 <b>CONGRATULATIONS! PAYMENT CONFIRMED!</b>\n\nClick below to enter <b>{channel_title}</b>:",
-                parse_mode="HTML",
-                reply_markup=join_btn
-            )
+                expire_timestamp = int((datetime.utcnow() + timedelta(hours=24)).timestamp())
+                created_invite = await bot.create_chat_invite_link(
+                    chat_id=target_channel,
+                    member_limit=1,
+                    expire_date=expire_timestamp
+                )
+                invite_url = created_invite.invite_link
+                
+                if db is not None:
+                    db.subscribers.update_one(
+                        {"telegram_id": telegram_id, "channel": channel_type},
+                        {"$set": {
+                            "telegram_id": telegram_id,
+                            "channel": channel_type,
+                            "days": days,
+                            "invite_link": invite_url,
+                            "joined_at": datetime.utcnow(),
+                            "expires_at": datetime.utcnow() + timedelta(days=days),
+                            "is_active": True,
+                            "reminder_sent": False
+                        }},
+                        upsert=True
+                    )
+                    
+                join_btn = InlineKeyboardMarkup([[InlineKeyboardButton(f"🚀 Join {channel_title}", url=invite_url)]])
+                await bot.send_message(
+                    chat_id=telegram_id,
+                    text=f"🎉 <b>CONGRATULATIONS! PAYMENT CONFIRMED!</b>\n\nClick below to enter <b>{channel_title}</b>:\n<i>(Link expires in 24 hours)</i>",
+                    parse_mode="HTML",
+                    reply_markup=join_btn
+                )
+    except Exception as webhook_err:
+        print(f"Webhook processing error: {webhook_err}")
         
     return {"status": "success"}
 
