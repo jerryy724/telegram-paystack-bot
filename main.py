@@ -1,11 +1,9 @@
 import os
 import asyncio
-import hmac
-import hashlib
 import httpx
 from datetime import datetime, timedelta
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Request, Header, HTTPException
+from fastapi import FastAPI, Request
 from pymongo import MongoClient
 from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
 
@@ -19,16 +17,19 @@ GOLD_CHANNEL_ID = os.getenv("GOLD_CHANNEL_ID")
 ADMIN_USERNAME = "jay_empire247"
 BOT_USERNAME = "JayEmpire_bot"
 
+# RENDER LIVE BASE URL (Hardcoded fallback to prevent environment variable mismatch)
 BASE_URL = "https://jay-empire-bot.onrender.com"
 
+# PRICING CONFIGURATION (USD BASE)
 PRICING_USD = {
-    "1_day_test": {"label": "🧪 1-Day Test", "usd": 0.01, "days": 1, "is_test": True},
+    "1_day_test": {"label": "🧪 1-Day Test (0.10 GHS)", "usd": 0.01, "days": 1, "is_test": True},
     "1_month": {"label": "1 Month ($15)", "usd": 15, "days": 30, "is_test": False},
     "6_months": {"label": "6 Months ($45)", "usd": 45, "days": 180, "is_test": False},
     "1_year": {"label": "1 Year ($100)", "usd": 100, "days": 365, "is_test": False},
     "lifetime": {"label": "Lifetime VIP ($250)", "usd": 250, "days": 36500, "is_test": False}
 }
 
+# LIVE EXCHANGE RATE STORAGE (FALLBACK DEFAULTS INCLUDED)
 LIVE_EXCHANGE_RATES = {
     "GHS": {"rate": 15.50, "symbol": "GHS ", "multiplier": 100},
     "NGN": {"rate": 1600.0, "symbol": "₦", "multiplier": 100},
@@ -52,6 +53,7 @@ TERMS_TEXT = (
 
 bot = Bot(token=BOT_TOKEN) if BOT_TOKEN else None
 
+# MONGO CLIENT WITH SSL TLS HANDSHAKE PARAMETERS
 mongo_client = MongoClient(
     MONGO_URI,
     tls=True,
@@ -60,7 +62,6 @@ mongo_client = MongoClient(
 ) if MONGO_URI else None
 
 db = mongo_client["telegram_bot_db"] if mongo_client else None
-
 
 # ==============================================================================
 # 1. LIVE FOREX RATE FETCHING TASK
@@ -77,7 +78,6 @@ async def update_live_exchange_rates():
                         LIVE_EXCHANGE_RATES[curr]["rate"] = rates[curr]
         except Exception as e:
             print(f"Failed to fetch live forex rates: {e}")
-
 
 # ==============================================================================
 # 2. AUTOMATED SUBSCRIPTION CHECKER & REMINDER LOOP
@@ -139,7 +139,6 @@ async def auto_subscription_checker():
             
         await asyncio.sleep(3600)
 
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     if bot:
@@ -156,7 +155,6 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
-
 # ==============================================================================
 # 3. TELEGRAM WEBHOOK HANDLER
 # ==============================================================================
@@ -169,6 +167,7 @@ async def telegram_webhook(request: Request):
             chat_id = data["message"]["chat"]["id"]
             text = data["message"].get("text", "")
             
+            # MANUAL WEBHOOK OVERRIDE COMMAND
             if text == "/setwebhook":
                 webhook_target = f"{BASE_URL}/telegram-webhook"
                 res = await bot.set_webhook(url=webhook_target)
@@ -179,7 +178,6 @@ async def telegram_webhook(request: Request):
                 return {"status": "ok"}
             
             if text.startswith("/start"):
-                # Handle deep link: /start success
                 if "success" in text:
                     sub = db.subscribers.find_one({"telegram_id": int(chat_id), "is_active": True}) if db is not None else None
                     
@@ -194,7 +192,6 @@ async def telegram_webhook(request: Request):
                         )
                         return {"status": "ok"}
                     
-                    # Payment may still be processing - offer refresh
                     check_btn = InlineKeyboardMarkup([[InlineKeyboardButton("🔄 Refresh My Access Link", callback_data="check_active_sub")]])
                     await bot.send_message(
                         chat_id=chat_id,
@@ -323,24 +320,15 @@ async def telegram_webhook(request: Request):
                     "Content-Type": "application/json"
                 }
                 
-                # =================================================================
-                # 🔥 CRITICAL FIX: Use the ACTUAL selected currency, not hardcoded GHS
-                # =================================================================
-                # Also handle test mode properly - test transactions often need GHS
-                paystack_currency = "GHS" if plan.get("is_test") else curr
-                
                 payload = {
                     "email": user_email,
                     "amount": amount_subunits,
-                    "currency": paystack_currency,  # ← FIXED: Uses curr (GHS, NGN, KES, etc.)
+                    "currency": "GHS",
                     "callback_url": f"https://t.me/{BOT_USERNAME}?start=success",
                     "metadata": {
                         "telegram_id": chat_id,
                         "channel_type": channel_type,
-                        "days": int(plan["days"]),
-                        "plan_key": plan_key,
-                        "currency": curr,
-                        "local_amount": total_local
+                        "days": int(plan["days"])
                     }
                 }
                 
@@ -359,7 +347,7 @@ async def telegram_webhook(request: Request):
                         f"<b>Checkout Summary:</b>\n"
                         f"Channel: <b>{channel_title}</b>\n"
                         f"Plan: <b>{plan['label']}</b>\n"
-                        f"Amount: <b>{rate_info['symbol']}{total_local:,.2f}</b> ({curr})\n\n"
+                        f"Local Amount: <b>{rate_info['symbol']}{total_local:,.2f}</b>\n\n"
                         f"📌 <b>IMPORTANT:</b> After tapping 'Complete Payment', click the <b>three dots (⋮)</b> in the top right corner and select <b>'Open in Browser'</b> before paying to ensure clean redirection back to Telegram!"
                     )
                     await bot.send_message(chat_id=chat_id, text=checkout_text, parse_mode="HTML", reply_markup=btn)
@@ -372,38 +360,16 @@ async def telegram_webhook(request: Request):
 
     return {"status": "ok"}
 
-
 # ==============================================================================
-# 4. PAYSTACK WEBHOOK HANDLER (SECURED)
+# 4. PAYSTACK WEBHOOK HANDLER
 # ==============================================================================
 @app.post("/paystack-webhook")
-async def paystack_webhook(request: Request, x_paystack_signature: str = Header(None)):
-    # -------------------------------------------------------------------------
-    # SECURITY: Verify Paystack signature to prevent fake payment events
-    # -------------------------------------------------------------------------
-    if not PAYSTACK_SECRET_KEY:
-        raise HTTPException(status_code=500, detail="Paystack secret not configured")
-    
-    body = await request.body()
-    
-    expected_sig = hmac.new(
-        PAYSTACK_SECRET_KEY.encode('utf-8'),
-        body,
-        hashlib.sha512
-    ).hexdigest()
-    
-    if not x_paystack_signature or not hmac.compare_digest(expected_sig, x_paystack_signature):
-        raise HTTPException(status_code=401, detail="Invalid signature")
-    
-    # -------------------------------------------------------------------------
-    # Process verified webhook
-    # -------------------------------------------------------------------------
+async def paystack_webhook(request: Request):
     try:
         payload = await request.json()
         
         if payload.get("event") == "charge.success":
-            data = payload["data"]
-            meta = data.get("metadata", {})
+            meta = payload["data"].get("metadata", {})
             telegram_id = meta.get("telegram_id")
             channel_type = meta.get("channel_type")
             days_raw = meta.get("days", 30)
@@ -436,10 +402,7 @@ async def paystack_webhook(request: Request, x_paystack_signature: str = Header(
                             "joined_at": datetime.utcnow(),
                             "expires_at": datetime.utcnow() + timedelta(days=days),
                             "is_active": True,
-                            "reminder_sent": False,
-                            "paystack_reference": data.get("reference"),
-                            "amount_paid": data.get("amount"),
-                            "currency_paid": data.get("currency")
+                            "reminder_sent": False
                         }},
                         upsert=True
                     )
@@ -455,7 +418,6 @@ async def paystack_webhook(request: Request, x_paystack_signature: str = Header(
         print(f"Webhook processing error: {webhook_err}")
         
     return {"status": "success"}
-
 
 @app.get("/")
 def home():
