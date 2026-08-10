@@ -17,8 +17,8 @@ GOLD_CHANNEL_ID = os.getenv("GOLD_CHANNEL_ID")
 ADMIN_USERNAME = "jay_empire247"
 BOT_USERNAME = "JayEmpire_bot"
 
-# RENDER LIVE DOMAIN FOR AUTOMATIC TELEGRAM WEBHOOK REGISTRATION
-RENDER_EXTERNAL_URL = os.getenv("RENDER_EXTERNAL_URL", "https://jay-empire-bot.onrender.com")
+# RENDER LIVE BASE URL (Hardcoded fallback to prevent environment variable mismatch)
+BASE_URL = "https://jay-empire-bot.onrender.com"
 
 # PRICING CONFIGURATION (USD BASE)
 PRICING_USD = {
@@ -53,7 +53,7 @@ TERMS_TEXT = (
 
 bot = Bot(token=BOT_TOKEN) if BOT_TOKEN else None
 
-# MONGO CLIENT WITH ROBUST SSL HANDSHAKE FIX
+# MONGO CLIENT WITH SSL TLS HANDSHAKE PARAMETERS
 mongo_client = MongoClient(
     MONGO_URI,
     tls=True,
@@ -67,7 +67,6 @@ db = mongo_client["telegram_bot_db"] if mongo_client else None
 # 1. LIVE FOREX RATE FETCHING TASK
 # ==============================================================================
 async def update_live_exchange_rates():
-    """Fetches real-time conversion rates for all Paystack African markets hourly."""
     global LIVE_EXCHANGE_RATES
     async with httpx.AsyncClient() as client:
         try:
@@ -77,30 +76,26 @@ async def update_live_exchange_rates():
                 for curr in ["GHS", "NGN", "KES", "ZAR", "XOF", "RWF", "EGP"]:
                     if curr in rates:
                         LIVE_EXCHANGE_RATES[curr]["rate"] = rates[curr]
-                print("✅ Successfully updated live African currency exchange rates.")
         except Exception as e:
             print(f"Failed to fetch live forex rates: {e}")
 
 # ==============================================================================
-# 2. AUTOMATED SUBSCRIPTION LIFECYCLE TASK
+# 2. AUTOMATED SUBSCRIPTION CHECKER & REMINDER LOOP
 # ==============================================================================
 async def auto_subscription_checker():
-    """Runs continuously in background for live rates, reminders, and user removal."""
     while True:
         try:
             await update_live_exchange_rates()
-            
             if db is not None and bot is not None:
                 now = datetime.utcnow()
                 three_days_from_now = now + timedelta(days=3)
                 
-                # 1. Send 3-Day Renewal Warnings
+                # 3-Day Reminders
                 impending_expirations = db.subscribers.find({
                     "expires_at": {"$lte": three_days_from_now, "$gt": now},
                     "reminder_sent": {"$ne": True},
                     "is_active": True
                 })
-                
                 for sub in impending_expirations:
                     user_id = sub["telegram_id"]
                     channel_title = "JAY FX PREMIUM SIGNALS" if sub["channel"] == "fx" else "JAY GOLD MASTER VIP"
@@ -116,7 +111,7 @@ async def auto_subscription_checker():
                     except Exception as e:
                         print(f"Reminder error for {user_id}: {e}")
 
-                # 2. Auto-Kick Expired Subscribers
+                # Kick Expired Members
                 expired_users = db.subscribers.find({"expires_at": {"$lte": now}, "is_active": True})
                 for sub in expired_users:
                     user_id = sub["telegram_id"]
@@ -127,7 +122,6 @@ async def auto_subscription_checker():
                     try:
                         await bot.ban_chat_member(chat_id=target_channel, user_id=user_id)
                         await bot.unban_chat_member(chat_id=target_channel, user_id=user_id)
-                        
                         renew_btn = InlineKeyboardMarkup([[InlineKeyboardButton("🔄 Rejoin VIP Channel", callback_data="back_main")]])
                         await bot.send_message(
                             chat_id=user_id,
@@ -145,13 +139,10 @@ async def auto_subscription_checker():
             
         await asyncio.sleep(3600)
 
-# ==============================================================================
-# FASTAPI LIFESPAN
-# ==============================================================================
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     if bot:
-        webhook_url = f"{RENDER_EXTERNAL_URL}/telegram-webhook"
+        webhook_url = f"{BASE_URL}/telegram-webhook"
         try:
             await bot.set_webhook(url=webhook_url)
             print(f"✅ Telegram Webhook registered to: {webhook_url}")
@@ -176,9 +167,19 @@ async def telegram_webhook(request: Request):
             chat_id = data["message"]["chat"]["id"]
             text = data["message"].get("text", "")
             
+            # MANUAL WEBHOOK OVERRIDE COMMAND
+            if text == "/setwebhook":
+                webhook_target = f"{BASE_URL}/telegram-webhook"
+                res = await bot.set_webhook(url=webhook_target)
+                if res:
+                    await bot.send_message(chat_id=chat_id, text=f"✅ Webhook manually connected to:\n`{webhook_target}`", parse_mode="Markdown")
+                else:
+                    await bot.send_message(chat_id=chat_id, text="❌ Telegram rejected webhook registration.")
+                return {"status": "ok"}
+            
             if text.startswith("/start"):
                 if "success" in text:
-                    sub = db.subscribers.find_one({"telegram_id": chat_id, "is_active": True}) if db is not None else None
+                    sub = db.subscribers.find_one({"telegram_id": int(chat_id), "is_active": True}) if db is not None else None
                     
                     if sub and sub.get("invite_link"):
                         channel_title = "JAY FX PREMIUM SIGNALS" if sub["channel"] == "fx" else "JAY GOLD MASTER VIP"
@@ -200,7 +201,6 @@ async def telegram_webhook(request: Request):
                     )
                     return {"status": "ok"}
 
-                # Standard /start command main menu
                 keyboard = [
                     [InlineKeyboardButton("📈 JAY FX PREMIUM SIGNALS", callback_data="terms:fx")],
                     [InlineKeyboardButton("🪙 JAY GOLD MASTER VIP", callback_data="terms:gold")],
@@ -225,7 +225,7 @@ async def telegram_webhook(request: Request):
                 pass
             
             if action == "check_active_sub":
-                sub = db.subscribers.find_one({"telegram_id": chat_id, "is_active": True}) if db is not None else None
+                sub = db.subscribers.find_one({"telegram_id": int(chat_id), "is_active": True}) if db is not None else None
                 if sub and sub.get("invite_link"):
                     channel_title = "JAY FX PREMIUM SIGNALS" if sub["channel"] == "fx" else "JAY GOLD MASTER VIP"
                     join_btn = InlineKeyboardMarkup([[InlineKeyboardButton(f"🚀 Join {channel_title}", url=sub["invite_link"])]])
@@ -328,7 +328,7 @@ async def telegram_webhook(request: Request):
                     "metadata": {
                         "telegram_id": chat_id,
                         "channel_type": channel_type,
-                        "days": int(plan["days"])  # ENFORCED INTEGER CONVERSION
+                        "days": int(plan["days"])
                     }
                 }
                 
@@ -374,7 +374,6 @@ async def paystack_webhook(request: Request):
             channel_type = meta.get("channel_type")
             days_raw = meta.get("days", 30)
             
-            # CONVERT TO INTEGER TO PREVENT TIMEDELTA CRASHES
             try:
                 days = int(days_raw)
             except Exception:
