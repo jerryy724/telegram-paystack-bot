@@ -8,209 +8,282 @@
     <script src="https://js.paystack.co/v1/inline.js"></script>
     <style>
         :root {
-            --bg-color: #0b0f19;
-            --card-bg: #151c2e;
-            --accent-gold: #f59e0b;
-            --accent-gold-glow: rgba(245, 158, 11, 0.3);
-            --text-main: #ffffff;
-            --text-muted: #94a3b8;
-            --border-color: rgba(255, 255, 255, 0.08);
+            --bg-main: #060913;
+            --card-bg: rgba(21, 28, 46, 0.7);
+            --card-border: rgba(212, 175, 55, 0.2);
+            --gold-accent: #d4af37;
+            --gold-glow: rgba(212, 175, 55, 0.35);
+            --blue-accent: #3b82f6;
+            --text-primary: #ffffff;
+            --text-secondary: #94a3b8;
+        }
+
+        * {
+            box-sizing: border-box;
+            -webkit-tap-highlight-color: transparent;
         }
 
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background-color: var(--bg-color);
-            color: var(--text-main);
+            background: radial-gradient(circle at top, #111827 0%, #060913 100%);
+            color: var(--text-primary);
             margin: 0;
-            padding: 16px;
-            overflow-x: hidden;
+            padding: 20px 16px;
+            min-height: 100vh;
         }
 
-        .header {
+        .brand-header {
             text-align: center;
-            padding: 12px 0 20px 0;
-            border-bottom: 1px solid var(--border-color);
-            margin-bottom: 20px;
+            margin-bottom: 24px;
         }
 
-        .header h1 {
+        .brand-logo {
+            font-size: 28px;
+            margin-bottom: 4px;
+            text-shadow: 0 0 16px var(--gold-glow);
+            animation: pulseGlow 3s infinite alternate;
+        }
+
+        @keyframes pulseGlow {
+            from { transform: scale(1); filter: drop-shadow(0 0 2px var(--gold-accent)); }
+            to { transform: scale(1.05); filter: drop-shadow(0 0 10px var(--gold-accent)); }
+        }
+
+        .brand-title {
             font-size: 20px;
-            margin: 0 0 6px 0;
-            color: var(--accent-gold);
+            font-weight: 800;
+            background: linear-gradient(135deg, #fff 30%, var(--gold-accent) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin: 0;
             letter-spacing: 0.5px;
         }
 
-        .header p {
-            font-size: 13px;
-            color: var(--text-muted);
-            margin: 0;
+        .brand-sub {
+            font-size: 12px;
+            color: var(--text-secondary);
+            margin-top: 4px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
         }
 
-        .step-container {
+        /* Animated Progress Bar */
+        .progress-bar {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 24px;
+            position: relative;
+        }
+
+        .progress-step {
+            width: 23%;
+            height: 4px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 2px;
+            transition: all 0.4s ease;
+        }
+
+        .progress-step.active {
+            background: var(--gold-accent);
+            box-shadow: 0 0 8px var(--gold-glow);
+        }
+
+        /* Step Motion Containers */
+        .step-panel {
             display: none;
-            animation: fadeIn 0.35s ease-in-out forwards;
+            opacity: 0;
+            transform: translateY(12px) scale(0.98);
+            transition: all 0.35s cubic-bezier(0.16, 1, 0.3, 1);
         }
 
-        .step-container.active {
+        .step-panel.active {
             display: block;
+            opacity: 1;
+            transform: translateY(0) scale(1);
         }
 
-        @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(8px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-
-        .card-btn {
+        .luxury-card {
             background: var(--card-bg);
-            border: 1px solid var(--border-color);
-            border-radius: 12px;
-            padding: 16px;
-            margin-bottom: 12px;
+            backdrop-filter: blur(12px);
+            border: 1px solid var(--card-border);
+            border-radius: 16px;
+            padding: 18px;
+            margin-bottom: 14px;
             display: flex;
             align-items: center;
             justify-content: space-between;
             cursor: pointer;
-            transition: all 0.2s ease;
+            transition: all 0.25s ease;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.4);
         }
 
-        .card-btn:active {
-            transform: scale(0.98);
-            border-color: var(--accent-gold);
-            box-shadow: 0 0 12px var(--accent-gold-glow);
+        .luxury-card:active {
+            transform: scale(0.97);
+            border-color: var(--gold-accent);
+            box-shadow: 0 0 15px var(--gold-glow);
+        }
+
+        .card-info {
+            display: flex;
+            flex-direction: column;
         }
 
         .card-title {
             font-size: 15px;
-            font-weight: 600;
+            font-weight: 700;
+            color: var(--text-primary);
         }
 
         .card-sub {
             font-size: 12px;
-            color: var(--text-muted);
+            color: var(--text-secondary);
             margin-top: 4px;
         }
 
-        .btn-primary {
-            background: linear-gradient(135deg, #d97706, #f59e0b);
+        .badge-gold {
+            background: rgba(212, 175, 55, 0.15);
+            color: var(--gold-accent);
+            border: 1px solid var(--gold-accent);
+            padding: 4px 8px;
+            border-radius: 20px;
+            font-size: 11px;
+            font-weight: 600;
+        }
+
+        .btn-gold {
+            background: linear-gradient(135deg, #d4af37 0%, #997a15 100%);
             color: #ffffff;
             border: none;
             width: 100%;
-            padding: 14px;
-            border-radius: 10px;
-            font-weight: 700;
-            font-size: 15px;
-            cursor: pointer;
-            box-shadow: 0 4px 14px var(--accent-gold-glow);
-            margin-top: 10px;
-        }
-
-        .btn-secondary {
-            background: transparent;
-            color: var(--text-muted);
-            border: 1px solid var(--border-color);
-            width: 100%;
-            padding: 10px;
-            border-radius: 8px;
-            font-size: 13px;
-            margin-top: 8px;
-            cursor: pointer;
-        }
-
-        .terms-box {
-            background: var(--card-bg);
-            border: 1px solid var(--border-color);
-            border-radius: 12px;
             padding: 16px;
+            border-radius: 12px;
+            font-size: 15px;
+            font-weight: 700;
+            cursor: pointer;
+            box-shadow: 0 4px 20px var(--gold-glow);
+            transition: all 0.2s ease;
+            margin-top: 8px;
+        }
+
+        .btn-gold:active {
+            transform: scale(0.98);
+        }
+
+        .btn-back {
+            background: transparent;
+            color: var(--text-secondary);
+            border: 1px solid rgba(255,255,255,0.1);
+            width: 100%;
+            padding: 12px;
+            border-radius: 10px;
+            font-size: 13px;
+            margin-top: 10px;
+            cursor: pointer;
+        }
+
+        .terms-container {
+            background: var(--card-bg);
+            border: 1px solid var(--card-border);
+            border-radius: 16px;
+            padding: 18px;
             font-size: 13px;
             line-height: 1.6;
-            color: var(--text-muted);
+            color: var(--text-secondary);
             margin-bottom: 16px;
         }
 
-        .terms-box b {
-            color: var(--text-main);
+        .terms-container strong {
+            color: var(--gold-accent);
         }
     </style>
 </head>
 <body>
 
-    <div class="header">
-        <h1 id="header-title">👑 Jay Empire VIP Terminal</h1>
-        <p id="header-subtitle">Apex Financial Intelligence</p>
+    <div class="brand-header">
+        <div class="brand-logo">👑</div>
+        <h1 class="brand-title">JAY EMPIRE VIP TERMINAL</h1>
+        <div class="brand-sub" id="nav-subtitle">Institutional Execution</div>
+    </div>
+
+    <div class="progress-bar">
+        <div class="progress-step active" id="p1"></div>
+        <div class="progress-step" id="p2"></div>
+        <div class="progress-step" id="p3"></div>
+        <div class="progress-step" id="p4"></div>
     </div>
 
     <!-- STEP 1: DESTINATION SELECTION -->
-    <div id="step-1" class="step-container active">
-        <div class="card-btn" onclick="selectChannel('gold', '🪙 JAY GOLD MASTER VIP')">
-            <div>
-                <div class="card-title">🪙 JAY GOLD MASTER VIP</div>
-                <div class="card-sub">Institutional Gold Signals & Analysis</div>
+    <div id="step-1" class="step-panel active">
+        <div class="luxury-card" onclick="selectChannel('gold', 'JAY GOLD MASTER VIP')">
+            <div class="card-info">
+                <span class="card-title">🪙 JAY GOLD MASTER VIP</span>
+                <span class="card-sub">Institutional XAUUSD Setups & Live Analysis</span>
             </div>
-            <span>➔</span>
+            <span class="badge-gold">SELECT</span>
         </div>
 
-        <div class="card-btn" onclick="selectChannel('fx', '📈 JAY FX PREMIUM SIGNALS')">
-            <div>
-                <div class="card-title">📈 JAY FX PREMIUM SIGNALS</div>
-                <div class="card-sub">High-Probability Forex Trades</div>
+        <div class="luxury-card" onclick="selectChannel('fx', 'JAY FX PREMIUM SIGNALS')">
+            <div class="card-info">
+                <span class="card-title">📈 JAY FX PREMIUM SIGNALS</span>
+                <span class="card-sub">High-Probability Forex & Index Execution</span>
             </div>
-            <span>➔</span>
+            <span class="badge-gold">SELECT</span>
         </div>
     </div>
 
-    <!-- STEP 2: TERMS AND CONDITIONS -->
-    <div id="step-2" class="step-container">
-        <div class="terms-box">
-            <b>⚠️ TERMS & CONDITIONS / DISCLAIMER</b><br><br>
-            1. <b>Risk Warning:</b> Trading financial instruments carries high risk.<br>
-            2. <b>No Refund Policy:</b> Subscriptions are non-refundable after channel entry link is issued.<br>
-            3. <b>Single-Use Access:</b> Entrance links are strictly individual and assigned exclusively to your Telegram ID.
+    <!-- STEP 2: TERMS AND DISCLAIMER -->
+    <div id="step-2" class="step-panel">
+        <div class="terms-container">
+            <strong>⚠️ EXECUTIVE TERMS & CONDITIONS</strong><br><br>
+            1. <strong>Risk Protocol:</strong> Financial market trading involves capital risk.<br>
+            2. <strong>Non-Refundable:</strong> All VIP memberships are final once link issuance triggers.<br>
+            3. <strong>Strict Anti-Forwarding:</strong> Invite links are encrypted single-use keys tied exclusively to your Telegram ID.
         </div>
-        <button class="btn-primary" onclick="goToStep(3)">✅ I Agree & Proceed</button>
-        <button class="btn-secondary" onclick="goToStep(1)">⬅️ Back</button>
+        <button class="btn-gold" onclick="goToStep(3)">✅ Accept & Proceed</button>
+        <button class="btn-back" onclick="goToStep(1)">⬅️ Back</button>
     </div>
 
-    <!-- STEP 3: BILLING REGION / CURRENCY -->
-    <div id="step-3" class="step-container">
-        <div class="card-btn" onclick="selectCurrency('GHS', 15.50, 'GHS ')">
-            <div>
-                <div class="card-title">🇬🇭 Ghana</div>
-                <div class="card-sub">Mobile Money (MTN / Telecel / AT) & Cards</div>
+    <!-- STEP 3: BILLING REGION SELECTION -->
+    <div id="step-3" class="step-panel">
+        <div class="luxury-card" onclick="selectCurrency('GHS', 15.50, 'GHS ')">
+            <div class="card-info">
+                <span class="card-title">🇬🇭 Ghana Market</span>
+                <span class="card-sub">MTN MoMo, Telecel Cash, Bank Cards</span>
             </div>
-            <span>➔</span>
+            <span class="badge-gold">GHS</span>
         </div>
 
-        <div class="card-btn" onclick="selectCurrency('NGN', 1600.0, '₦')">
-            <div>
-                <div class="card-title">🇳🇬 Nigeria</div>
-                <div class="card-sub">Bank Transfer, USSD & Cards</div>
+        <div class="luxury-card" onclick="selectCurrency('NGN', 1600.0, '₦')">
+            <div class="card-info">
+                <span class="card-title">🇳🇬 Nigeria Market</span>
+                <span class="card-sub">Bank Transfers, USSD, Cards</span>
             </div>
-            <span>➔</span>
+            <span class="badge-gold">NGN</span>
         </div>
 
-        <div class="card-btn" onclick="selectCurrency('KES', 130.0, 'KSh ')">
-            <div>
-                <div class="card-title">🇰🇪 Kenya</div>
-                <div class="card-sub">M-Pesa & Card Payments</div>
+        <div class="luxury-card" onclick="selectCurrency('KES', 130.0, 'KSh ')">
+            <div class="card-info">
+                <span class="card-title">🇰🇪 Kenya Market</span>
+                <span class="card-sub">M-Pesa & Cards</span>
             </div>
-            <span>➔</span>
+            <span class="badge-gold">KES</span>
         </div>
 
-        <div class="card-btn" onclick="selectCurrency('USD', 1.0, '$')">
-            <div>
-                <div class="card-title">🌍 International / Rest of World</div>
-                <div class="card-sub">Global Debit / Credit Cards (USD)</div>
+        <div class="luxury-card" onclick="selectCurrency('USD', 1.0, '$')">
+            <div class="card-info">
+                <span class="card-title">🌍 International</span>
+                <span class="card-sub">Global Debit / Credit Cards</span>
             </div>
-            <span>➔</span>
+            <span class="badge-gold">USD</span>
         </div>
 
-        <button class="btn-secondary" onclick="goToStep(2)">⬅️ Back</button>
+        <button class="btn-back" onclick="goToStep(2)">⬅️ Back</button>
     </div>
 
-    <!-- STEP 4: DURATION TIER SELECTION -->
-    <div id="step-4" class="step-container">
-        <div id="plans-list"></div>
-        <button class="btn-secondary" onclick="goToStep(3)">⬅️ Back</button>
+    <!-- STEP 4: DURATION SELECTION -->
+    <div id="step-4" class="step-panel">
+        <div id="plans-container"></div>
+        <button class="btn-back" onclick="goToStep(3)">⬅️ Back</button>
     </div>
 
     <script>
@@ -228,18 +301,27 @@
             { key: '1_month', label: '1 Month Access', usd: 15, days: 30, isTest: false },
             { key: '6_months', label: '6 Months Access', usd: 45, days: 180, isTest: false },
             { key: '1_year', label: '1 Year Access', usd: 100, days: 365, isTest: false },
-            { key: 'lifetime', label: 'Lifetime Pass', usd: 250, days: 36500, isTest: false }
+            { key: 'lifetime', label: 'Lifetime VIP Pass', usd: 250, days: 36500, isTest: false }
         ];
 
+        function updateProgress(step) {
+            for (let i = 1; i <= 4; i++) {
+                const el = document.getElementById(`p${i}`);
+                if (i <= step) el.classList.add('active');
+                else el.classList.remove('active');
+            }
+        }
+
         function goToStep(stepNumber) {
-            document.querySelectorAll('.step-container').forEach(el => el.classList.remove('active'));
+            document.querySelectorAll('.step-panel').forEach(el => el.classList.remove('active'));
             document.getElementById(`step-${stepNumber}`).classList.add('active');
+            updateProgress(stepNumber);
         }
 
         function selectChannel(channelKey, title) {
             selectedChannel = channelKey;
             selectedChannelTitle = title;
-            document.getElementById('header-subtitle').innerText = title;
+            document.getElementById('nav-subtitle').innerText = title;
             goToStep(2);
         }
 
@@ -252,37 +334,37 @@
         }
 
         function renderPlans() {
-            const container = document.getElementById('plans-list');
+            const container = document.getElementById('plans-container');
             container.innerHTML = '';
 
             basePlans.forEach(plan => {
-                let localPriceFormatted = '';
+                let displayPrice = '';
                 let amountInSubunits = 0;
 
                 if (plan.isTest) {
-                    localPriceFormatted = '0.10 GHS';
+                    displayPrice = '0.10 GHS';
                     amountInSubunits = 10;
                 } else {
                     const localTotal = plan.usd * currencyRate;
-                    localPriceFormatted = `${currencySymbol}${localTotal.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+                    displayPrice = `${currencySymbol}${localTotal.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
                     amountInSubunits = Math.round(localTotal * 100);
                 }
 
                 const card = document.createElement('div');
-                card.className = 'card-btn';
-                card.onclick = () => executePaystack(amountInSubunits, plan.days, localPriceFormatted);
+                card.className = 'luxury-card';
+                card.onclick = () => executeCheckout(amountInSubunits, plan.days);
                 card.innerHTML = `
-                    <div>
-                        <div class="card-title">${plan.label}</div>
-                        <div class="card-sub">Total Payable: ${localPriceFormatted}</div>
+                    <div class="card-info">
+                        <span class="card-title">${plan.label}</span>
+                        <span class="card-sub">Payable: ${displayPrice}</span>
                     </div>
-                    <span>💳</span>
+                    <span class="badge-gold">PAY NOW</span>
                 `;
                 container.appendChild(card);
             });
         }
 
-        function executePaystack(amountSubunits, days, priceDisplay) {
+        function executeCheckout(amountSubunits, days) {
             const user = tg.initDataUnsafe.user;
             const userEmail = user ? `user_${user.id}@jayempire.com` : 'client@jayempire.com';
 
