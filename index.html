@@ -7,70 +7,299 @@
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <script src="https://js.paystack.co/v1/inline.js"></script>
     <style>
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-            background-color: var(--tg-theme-bg-color, #0f172a);
-            color: var(--tg-theme-text-color, #ffffff);
-            margin: 0;
-            padding: 20px;
+        :root {
+            --bg-color: #0b0f19;
+            --card-bg: #151c2e;
+            --accent-gold: #f59e0b;
+            --accent-gold-glow: rgba(245, 158, 11, 0.3);
+            --text-main: #ffffff;
+            --text-muted: #94a3b8;
+            --border-color: rgba(255, 255, 255, 0.08);
         }
-        .card {
-            background: rgba(255, 255, 255, 0.05);
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-main);
+            margin: 0;
+            padding: 16px;
+            overflow-x: hidden;
+        }
+
+        .header {
+            text-align: center;
+            padding: 12px 0 20px 0;
+            border-bottom: 1px solid var(--border-color);
+            margin-bottom: 20px;
+        }
+
+        .header h1 {
+            font-size: 20px;
+            margin: 0 0 6px 0;
+            color: var(--accent-gold);
+            letter-spacing: 0.5px;
+        }
+
+        .header p {
+            font-size: 13px;
+            color: var(--text-muted);
+            margin: 0;
+        }
+
+        .step-container {
+            display: none;
+            animation: fadeIn 0.35s ease-in-out forwards;
+        }
+
+        .step-container.active {
+            display: block;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(8px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .card-btn {
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
             border-radius: 12px;
             padding: 16px;
             margin-bottom: 12px;
-            border: 1px solid rgba(255, 255, 255, 0.1);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            cursor: pointer;
+            transition: all 0.2s ease;
         }
-        .btn {
-            background: #d97706;
-            color: white;
+
+        .card-btn:active {
+            transform: scale(0.98);
+            border-color: var(--accent-gold);
+            box-shadow: 0 0 12px var(--accent-gold-glow);
+        }
+
+        .card-title {
+            font-size: 15px;
+            font-weight: 600;
+        }
+
+        .card-sub {
+            font-size: 12px;
+            color: var(--text-muted);
+            margin-top: 4px;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #d97706, #f59e0b);
+            color: #ffffff;
             border: none;
             width: 100%;
-            padding: 12px;
-            border-radius: 8px;
-            font-weight: bold;
+            padding: 14px;
+            border-radius: 10px;
+            font-weight: 700;
+            font-size: 15px;
             cursor: pointer;
-            font-size: 16px;
+            box-shadow: 0 4px 14px var(--accent-gold-glow);
+            margin-top: 10px;
+        }
+
+        .btn-secondary {
+            background: transparent;
+            color: var(--text-muted);
+            border: 1px solid var(--border-color);
+            width: 100%;
+            padding: 10px;
+            border-radius: 8px;
+            font-size: 13px;
+            margin-top: 8px;
+            cursor: pointer;
+        }
+
+        .terms-box {
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 16px;
+            font-size: 13px;
+            line-height: 1.6;
+            color: var(--text-muted);
+            margin-bottom: 16px;
+        }
+
+        .terms-box b {
+            color: var(--text-main);
         }
     </style>
 </head>
 <body>
-    <h2>👑 Jay Empire VIP Pass</h2>
-    <p>Select your tier to unlock institutional trading setups:</p>
 
-    <div class="card">
-        <h3>🧪 1-Day VIP Pass (0.10 GHS)</h3>
-        <button class="btn" onclick="payWithPaystack(10, '1_day_test', 'gold', 1)">Unlock Access</button>
+    <div class="header">
+        <h1 id="header-title">👑 Jay Empire VIP Terminal</h1>
+        <p id="header-subtitle">Apex Financial Intelligence</p>
     </div>
 
-    <div class="card">
-        <h3>🪙 1 Month Gold VIP ($15)</h3>
-        <button class="btn" onclick="payWithPaystack(23250, '1_month', 'gold', 30)">Unlock Access</button>
+    <!-- STEP 1: DESTINATION SELECTION -->
+    <div id="step-1" class="step-container active">
+        <div class="card-btn" onclick="selectChannel('gold', '🪙 JAY GOLD MASTER VIP')">
+            <div>
+                <div class="card-title">🪙 JAY GOLD MASTER VIP</div>
+                <div class="card-sub">Institutional Gold Signals & Analysis</div>
+            </div>
+            <span>➔</span>
+        </div>
+
+        <div class="card-btn" onclick="selectChannel('fx', '📈 JAY FX PREMIUM SIGNALS')">
+            <div>
+                <div class="card-title">📈 JAY FX PREMIUM SIGNALS</div>
+                <div class="card-sub">High-Probability Forex Trades</div>
+            </div>
+            <span>➔</span>
+        </div>
+    </div>
+
+    <!-- STEP 2: TERMS AND CONDITIONS -->
+    <div id="step-2" class="step-container">
+        <div class="terms-box">
+            <b>⚠️ TERMS & CONDITIONS / DISCLAIMER</b><br><br>
+            1. <b>Risk Warning:</b> Trading financial instruments carries high risk.<br>
+            2. <b>No Refund Policy:</b> Subscriptions are non-refundable after channel entry link is issued.<br>
+            3. <b>Single-Use Access:</b> Entrance links are strictly individual and assigned exclusively to your Telegram ID.
+        </div>
+        <button class="btn-primary" onclick="goToStep(3)">✅ I Agree & Proceed</button>
+        <button class="btn-secondary" onclick="goToStep(1)">⬅️ Back</button>
+    </div>
+
+    <!-- STEP 3: BILLING REGION / CURRENCY -->
+    <div id="step-3" class="step-container">
+        <div class="card-btn" onclick="selectCurrency('GHS', 15.50, 'GHS ')">
+            <div>
+                <div class="card-title">🇬🇭 Ghana</div>
+                <div class="card-sub">Mobile Money (MTN / Telecel / AT) & Cards</div>
+            </div>
+            <span>➔</span>
+        </div>
+
+        <div class="card-btn" onclick="selectCurrency('NGN', 1600.0, '₦')">
+            <div>
+                <div class="card-title">🇳🇬 Nigeria</div>
+                <div class="card-sub">Bank Transfer, USSD & Cards</div>
+            </div>
+            <span>➔</span>
+        </div>
+
+        <div class="card-btn" onclick="selectCurrency('KES', 130.0, 'KSh ')">
+            <div>
+                <div class="card-title">🇰🇪 Kenya</div>
+                <div class="card-sub">M-Pesa & Card Payments</div>
+            </div>
+            <span>➔</span>
+        </div>
+
+        <div class="card-btn" onclick="selectCurrency('USD', 1.0, '$')">
+            <div>
+                <div class="card-title">🌍 International / Rest of World</div>
+                <div class="card-sub">Global Debit / Credit Cards (USD)</div>
+            </div>
+            <span>➔</span>
+        </div>
+
+        <button class="btn-secondary" onclick="goToStep(2)">⬅️ Back</button>
+    </div>
+
+    <!-- STEP 4: DURATION TIER SELECTION -->
+    <div id="step-4" class="step-container">
+        <div id="plans-list"></div>
+        <button class="btn-secondary" onclick="goToStep(3)">⬅️ Back</button>
     </div>
 
     <script>
         const tg = window.Telegram.WebApp;
         tg.expand();
 
-        function payWithPaystack(amountSubunits, planKey, channelType, days) {
+        let selectedChannel = '';
+        let selectedChannelTitle = '';
+        let selectedCurrency = 'GHS';
+        let currencyRate = 15.50;
+        let currencySymbol = 'GHS ';
+
+        const basePlans = [
+            { key: '1_day_test', label: '🧪 1-Day VIP Pass', usd: 0.01, days: 1, isTest: true },
+            { key: '1_month', label: '1 Month Access', usd: 15, days: 30, isTest: false },
+            { key: '6_months', label: '6 Months Access', usd: 45, days: 180, isTest: false },
+            { key: '1_year', label: '1 Year Access', usd: 100, days: 365, isTest: false },
+            { key: 'lifetime', label: 'Lifetime Pass', usd: 250, days: 36500, isTest: false }
+        ];
+
+        function goToStep(stepNumber) {
+            document.querySelectorAll('.step-container').forEach(el => el.classList.remove('active'));
+            document.getElementById(`step-${stepNumber}`).classList.add('active');
+        }
+
+        function selectChannel(channelKey, title) {
+            selectedChannel = channelKey;
+            selectedChannelTitle = title;
+            document.getElementById('header-subtitle').innerText = title;
+            goToStep(2);
+        }
+
+        function selectCurrency(curr, rate, symbol) {
+            selectedCurrency = curr;
+            currencyRate = rate;
+            currencySymbol = symbol;
+            renderPlans();
+            goToStep(4);
+        }
+
+        function renderPlans() {
+            const container = document.getElementById('plans-list');
+            container.innerHTML = '';
+
+            basePlans.forEach(plan => {
+                let localPriceFormatted = '';
+                let amountInSubunits = 0;
+
+                if (plan.isTest) {
+                    localPriceFormatted = '0.10 GHS';
+                    amountInSubunits = 10;
+                } else {
+                    const localTotal = plan.usd * currencyRate;
+                    localPriceFormatted = `${currencySymbol}${localTotal.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+                    amountInSubunits = Math.round(localTotal * 100);
+                }
+
+                const card = document.createElement('div');
+                card.className = 'card-btn';
+                card.onclick = () => executePaystack(amountInSubunits, plan.days, localPriceFormatted);
+                card.innerHTML = `
+                    <div>
+                        <div class="card-title">${plan.label}</div>
+                        <div class="card-sub">Total Payable: ${localPriceFormatted}</div>
+                    </div>
+                    <span>💳</span>
+                `;
+                container.appendChild(card);
+            });
+        }
+
+        function executePaystack(amountSubunits, days, priceDisplay) {
             const user = tg.initDataUnsafe.user;
             const userEmail = user ? `user_${user.id}@jayempire.com` : 'client@jayempire.com';
 
             let handler = PaystackPop.setup({
-                key: 'pk_live_c470302d79292c5df97f088509a5a99d39788fc8', // Your Paystack Public Key
+                key: 'pk_live_c470302d79292c5df97f088509a5a99d39788fc8',
                 email: userEmail,
                 amount: amountSubunits,
-                currency: 'GHS',
+                currency: selectedCurrency === 'GHS' || amountSubunits === 10 ? 'GHS' : selectedCurrency,
                 metadata: {
                     telegram_id: user ? user.id : 0,
-                    channel_type: channelType,
+                    channel_type: selectedChannel,
                     days: days
                 },
                 callback: function(response) {
-                    // Send transaction reference back to Bot via WebApp Data
                     tg.sendData(JSON.stringify({
                         reference: response.reference,
-                        channel_type: channelType,
+                        channel_type: selectedChannel,
                         days: days
                     }));
                     tg.close();
