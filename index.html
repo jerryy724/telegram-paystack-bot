@@ -8,13 +8,12 @@
     <script src="https://js.paystack.co/v1/inline.js"></script>
     <style>
         :root {
-            --bg-dark: #040711;
-            --blue-accent: #1e40af;
-            --blue-glow: #3b82f6;
-            --gold-primary: #d4af37;
-            --gold-glow: #f59e0b;
-            --card-bg: rgba(13, 22, 41, 0.85);
-            --card-border: rgba(212, 175, 55, 0.3);
+            --bg-dark: #030712;
+            --blue-glow: #2563eb;
+            --gold-primary: #fbbf24;
+            --gold-glow: rgba(251, 191, 36, 0.4);
+            --card-bg: rgba(15, 23, 42, 0.75);
+            --card-border: rgba(251, 191, 36, 0.25);
             --text-main: #ffffff;
             --text-muted: #94a3b8;
         }
@@ -26,32 +25,77 @@
 
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: radial-gradient(circle at top, #0b132b 0%, var(--bg-dark) 100%);
+            background-color: var(--bg-dark);
             color: var(--text-main);
             margin: 0;
             padding: 16px;
             min-height: 100vh;
             overflow-x: hidden;
+            position: relative;
         }
 
-        /* LIVE TICKER MOTION */
+        /* AMBIENT BACKGROUND MOTION ORBS */
+        .ambient-bg {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            z-index: -1;
+            overflow: hidden;
+            pointer-events: none;
+        }
+
+        .orb {
+            position: absolute;
+            border-radius: 50%;
+            filter: blur(80px);
+            opacity: 0.25;
+            animation: orbFloat 12s infinite alternate ease-in-out;
+        }
+
+        .orb-1 {
+            width: 250px;
+            height: 250px;
+            background: var(--blue-glow);
+            top: -10%;
+            left: -10%;
+        }
+
+        .orb-2 {
+            width: 300px;
+            height: 300px;
+            background: #d97706;
+            bottom: -10%;
+            right: -10%;
+            animation-delay: -6s;
+        }
+
+        @keyframes orbFloat {
+            0% { transform: translate(0, 0) scale(1); }
+            100% { transform: translate(30px, 40px) scale(1.15); }
+        }
+
+        /* LIVE TICKER */
         .ticker-wrap {
             width: 100%;
-            background: rgba(30, 64, 175, 0.15);
-            border-bottom: 1px solid rgba(59, 130, 246, 0.2);
+            background: rgba(30, 58, 138, 0.35);
+            border: 1px solid rgba(59, 130, 246, 0.4);
             overflow: hidden;
             white-space: nowrap;
-            padding: 6px 0;
-            margin-bottom: 16px;
-            border-radius: 8px;
+            padding: 10px 0;
+            margin-bottom: 20px;
+            border-radius: 12px;
+            backdrop-filter: blur(8px);
         }
 
         .ticker-move {
             display: inline-block;
-            animation: ticker 25s linear infinite;
-            font-size: 11px;
-            font-weight: 600;
+            animation: ticker 20s linear infinite;
+            font-size: 13px;
+            font-weight: 700;
             color: var(--gold-primary);
+            letter-spacing: 0.5px;
         }
 
         @keyframes ticker {
@@ -59,20 +103,30 @@
             100% { transform: translate3d(-50%, 0, 0); }
         }
 
-        /* HEADER & LOGO */
+        /* HEADER & EMBLEM */
         .brand-header {
             text-align: center;
             margin-bottom: 20px;
         }
 
-        .logo-img {
-            width: 65px;
-            height: 65px;
+        .emblem-badge {
+            width: 68px;
+            height: 68px;
+            margin: 0 auto 10px auto;
             border-radius: 50%;
+            background: radial-gradient(circle, rgba(251, 191, 36, 0.2) 0%, rgba(15, 23, 42, 0.9) 100%);
             border: 2px solid var(--gold-primary);
-            box-shadow: 0 0 15px var(--gold-glow);
-            object-fit: cover;
-            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 32px;
+            box-shadow: 0 0 20px var(--gold-glow);
+            animation: emblemPulse 3s infinite alternate;
+        }
+
+        @keyframes emblemPulse {
+            0% { transform: scale(1); box-shadow: 0 0 15px var(--gold-glow); }
+            100% { transform: scale(1.05); box-shadow: 0 0 25px rgba(251, 191, 36, 0.6); }
         }
 
         .brand-title {
@@ -82,14 +136,14 @@
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
             margin: 0;
-            letter-spacing: 0.5px;
+            letter-spacing: 1px;
         }
 
         .brand-sub {
             font-size: 11px;
             color: var(--text-muted);
             text-transform: uppercase;
-            letter-spacing: 1.5px;
+            letter-spacing: 2px;
             margin-top: 4px;
         }
 
@@ -118,7 +172,7 @@
             display: none;
             opacity: 0;
             transform: translateY(12px);
-            transition: all 0.35s ease;
+            transition: all 0.35s cubic-bezier(0.16, 1, 0.3, 1);
         }
 
         .panel.active {
@@ -127,9 +181,8 @@
             transform: translateY(0);
         }
 
-        /* MOTIVATION / VISION CARD */
         .vision-card {
-            background: linear-gradient(135deg, rgba(30, 64, 175, 0.2), rgba(212, 175, 55, 0.1));
+            background: linear-gradient(135deg, rgba(37, 99, 235, 0.2), rgba(251, 191, 36, 0.1));
             border: 1px solid var(--card-border);
             border-radius: 14px;
             padding: 16px;
@@ -137,67 +190,78 @@
             line-height: 1.6;
             color: #e2e8f0;
             margin-bottom: 16px;
+            backdrop-filter: blur(12px);
         }
 
         .vision-card strong {
             color: var(--gold-primary);
         }
 
-        /* CARDS */
+        /* GLASS CARDS */
         .glass-card {
             background: var(--card-bg);
-            backdrop-filter: blur(12px);
+            backdrop-filter: blur(16px);
             border: 1px solid var(--card-border);
-            border-radius: 14px;
-            padding: 16px;
-            margin-bottom: 12px;
+            border-radius: 16px;
+            padding: 18px;
+            margin-bottom: 14px;
             display: flex;
             align-items: center;
             justify-content: space-between;
             cursor: pointer;
             transition: all 0.25s ease;
-            box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
         }
 
         .glass-card:active {
             transform: scale(0.97);
             border-color: var(--gold-primary);
-            box-shadow: 0 0 18px var(--gold-glow);
+            box-shadow: 0 0 20px var(--gold-glow);
         }
 
         .card-heading {
-            font-size: 14px;
+            font-size: 15px;
             font-weight: 700;
             color: #ffffff;
         }
 
         .card-desc {
-            font-size: 11px;
+            font-size: 12px;
             color: var(--text-muted);
-            margin-top: 3px;
+            margin-top: 4px;
         }
 
         .pill-gold {
-            background: rgba(212, 175, 55, 0.15);
+            background: rgba(251, 191, 36, 0.15);
             color: var(--gold-primary);
             border: 1px solid var(--gold-primary);
-            padding: 5px 10px;
+            padding: 6px 12px;
+            border-radius: 16px;
+            font-size: 11px;
+            font-weight: 700;
+        }
+
+        .pill-blue {
+            background: rgba(59, 130, 246, 0.15);
+            color: #93c5fd;
+            border: 1px solid var(--blue-glow);
+            padding: 6px 12px;
             border-radius: 16px;
             font-size: 11px;
             font-weight: 700;
         }
 
         .btn-gold {
-            background: linear-gradient(135deg, #d4af37 0%, #b45309 100%);
+            background: linear-gradient(135deg, #f59e0b 0%, #b45309 100%);
             color: #ffffff;
             border: none;
             width: 100%;
-            padding: 15px;
+            padding: 16px;
             border-radius: 12px;
-            font-size: 14px;
+            font-size: 15px;
             font-weight: 800;
             cursor: pointer;
-            box-shadow: 0 4px 18px var(--gold-glow);
+            box-shadow: 0 4px 20px var(--gold-glow);
             margin-top: 10px;
             text-transform: uppercase;
         }
@@ -209,38 +273,21 @@
             width: 100%;
             padding: 12px;
             border-radius: 10px;
-            font-size: 12px;
+            font-size: 13px;
             margin-top: 8px;
             cursor: pointer;
-        }
-
-        /* SUCCESS OVERLAY */
-        .success-box {
-            text-align: center;
-            padding: 20px;
-            background: var(--card-bg);
-            border: 2px solid var(--gold-primary);
-            border-radius: 16px;
-            box-shadow: 0 0 25px var(--gold-glow);
-        }
-
-        .success-link-btn {
-            display: block;
-            background: linear-gradient(135deg, #10b981, #059669);
-            color: white;
-            text-decoration: none;
-            padding: 16px;
-            border-radius: 12px;
-            font-weight: 800;
-            font-size: 15px;
-            margin-top: 16px;
-            box-shadow: 0 0 15px rgba(16, 185, 129, 0.4);
         }
     </style>
 </head>
 <body>
 
-    <!-- LIVE MARKET MOTION TICKER -->
+    <!-- AMBIENT BACKGROUND MOTION -->
+    <div class="ambient-bg">
+        <div class="orb orb-1"></div>
+        <div class="orb orb-2"></div>
+    </div>
+
+    <!-- LIVE TICKER -->
     <div class="ticker-wrap">
         <div class="ticker-move">
             🥇 XAUUSD: BUY @ 2420.50 🚀 | 📈 EURUSD: BULLISH | 👑 JAY EMPIRE VIP: 94.2% WIN RATE | 📊 GBPUSD: TARGET HIT | 🪙 GOLD MASTER VIP ACTIVE
@@ -248,8 +295,7 @@
     </div>
 
     <div class="brand-header">
-        <!-- LOGO PLACEHOLDER: Replace src with your official image link if needed -->
-        <img src="https://ui-avatars.com/api/?name=Jay+Empire&background=0D1629&color=D4AF37&size=128&bold=true" alt="Jay Empire Logo" class="logo-img">
+        <div class="emblem-badge">👑</div>
         <div class="brand-title">JAY EMPIRE VIP</div>
         <div class="brand-sub" id="sub-header">Institutional Access Terminal</div>
     </div>
@@ -261,19 +307,17 @@
         <div class="tracker-dot" id="t4"></div>
     </div>
 
-    <!-- STEP 1: DESTINATION & SERVICES -->
+    <!-- HOMEPAGE PANEL: 3 CORE OPTIONS -->
     <div id="step-1" class="panel active">
         <div class="vision-card">
             <strong>👑 WELCOME TO JAY EMPIRE</strong><br>
-            Precision, discipline, and institutional execution. Select your VIP trading hub or request our high-tier digital agency services below.
+            Precision trading execution and institutional insights. Select your VIP destination or request specialized digital agency services below.
         </div>
 
-        <div style="font-size: 12px; font-weight: 700; color: var(--gold-primary); margin-bottom: 8px;">📊 VIP TRADING CHANNELS</div>
-        
         <div class="glass-card" onclick="chooseDestination('gold', 'JAY GOLD MASTER VIP')">
             <div>
                 <div class="card-heading">🪙 JAY GOLD MASTER VIP</div>
-                <div class="card-desc">XAUUSD Institutional Setups & Live Analysis</div>
+                <div class="card-desc">Gold (XAUUSD) Signals & Technical Analysis</div>
             </div>
             <div class="pill-gold">SELECT</div>
         </div>
@@ -281,44 +325,60 @@
         <div class="glass-card" onclick="chooseDestination('fx', 'JAY FX PREMIUM SIGNALS')">
             <div>
                 <div class="card-heading">📈 JAY FX PREMIUM SIGNALS</div>
-                <div class="card-desc">Forex Pairs & High-Probability Execution</div>
+                <div class="card-desc">Forex Currency Pairs & Indices Execution</div>
             </div>
             <div class="pill-gold">SELECT</div>
         </div>
 
-        <div style="font-size: 12px; font-weight: 700; color: var(--blue-glow); margin: 16px 0 8px 0;">💼 JAY EMPIRE SPECIAL SERVICES</div>
+        <div class="glass-card" onclick="switchStep('services')">
+            <div>
+                <div class="card-heading">💼 REQUEST SPECIAL SERVICES</div>
+                <div class="card-desc">Video Ads, Branding, Funnels & Bulk SMS</div>
+            </div>
+            <div class="pill-blue">EXPLORE</div>
+        </div>
+    </div>
 
-        <div class="glass-card" onclick="openDirectService('Video Editing & Ad Production')">
+    <!-- SUB-MENU: SPECIAL SERVICES -->
+    <div id="step-services" class="panel">
+        <div class="vision-card">
+            <strong>💼 JAY EMPIRE DIGITAL SERVICES</strong><br>
+            Tap any service to connect directly with executive support.
+        </div>
+
+        <div class="glass-card" onclick="openDirectService('High-End Video Ads & Retouching')">
             <div>
                 <div class="card-heading">🎬 High-End Video Ads & Editing</div>
                 <div class="card-desc">TikTok/Reels Ads & Cinema Retouching</div>
             </div>
-            <div class="pill-gold" style="border-color: var(--blue-glow); color: #93c5fd;">DIRECT</div>
+            <div class="pill-blue">CONNECT</div>
         </div>
 
         <div class="glass-card" onclick="openDirectService('Graphic & Logo Design')">
             <div>
                 <div class="card-heading">🎨 Brand Design & Flyers</div>
-                <div class="card-desc">Logos, Mockups & Marketing Assets</div>
+                <div class="card-desc">Logos, Mockups & Brand Assets</div>
             </div>
-            <div class="pill-gold" style="border-color: var(--blue-glow); color: #93c5fd;">DIRECT</div>
+            <div class="pill-blue">CONNECT</div>
         </div>
 
-        <div class="glass-card" onclick="openDirectService('Brand Consultancy & Digital Funnels')">
+        <div class="glass-card" onclick="openDirectService('Brand Consultancy & Funnels')">
             <div>
                 <div class="card-heading">🚀 Brand Consultancy & Funnels</div>
                 <div class="card-desc">Growth Strategy & Automation</div>
             </div>
-            <div class="pill-gold" style="border-color: var(--blue-glow); color: #93c5fd;">DIRECT</div>
+            <div class="pill-blue">CONNECT</div>
         </div>
 
-        <div class="glass-card" onclick="openDirectService('Bulk SMS & VTU Data Hub')">
+        <div class="glass-card" onclick="openDirectService('Bulk SMS & Data Reselling Hub')">
             <div>
-                <div class="card-heading">📲 Bulk SMS & Data Reselling</div>
-                <div class="card-desc">Automated SMS Marketing & Portals</div>
+                <div class="card-heading">📲 Bulk SMS & VTU Data Hub</div>
+                <div class="card-desc">SMS Marketing & Data Reselling Portals</div>
             </div>
-            <div class="pill-gold" style="border-color: var(--blue-glow); color: #93c5fd;">DIRECT</div>
+            <div class="pill-blue">CONNECT</div>
         </div>
+
+        <button class="btn-ghost" onclick="switchStep(1)">⬅️ Back to Main Menu</button>
     </div>
 
     <!-- STEP 2: TERMS -->
@@ -326,8 +386,8 @@
         <div class="vision-card">
             <strong>⚠️ TERMS OF MEMBERSHIP</strong><br><br>
             1. <strong>Risk Protocol:</strong> Financial trading carries capital risk.<br>
-            2. <strong>Instant Access:</strong> All purchases issue an encrypted single-use access key.<br>
-            3. <strong>No Refunds:</strong> Membership activations are final upon key generation.
+            2. <strong>Instant Access:</strong> All purchases generate single-use Telegram entrance links.<br>
+            3. <strong>No Refunds:</strong> Subscriptions are non-refundable after access activation.
         </div>
         <button class="btn-gold" onclick="switchStep(3)">✅ Accept & Proceed</button>
         <button class="btn-ghost" onclick="switchStep(1)">⬅️ Back</button>
@@ -376,17 +436,6 @@
         <button class="btn-ghost" onclick="switchStep(3)">⬅️ Back</button>
     </div>
 
-    <!-- SUCCESS SCREEN -->
-    <div id="step-success" class="panel">
-        <div class="success-box">
-            <div style="font-size: 32px;">🎉</div>
-            <h2 style="color: var(--gold-primary); margin: 6px 0;">PAYMENT AUTHORIZED!</h2>
-            <p style="font-size: 13px; color: var(--text-muted);">Your VIP access link has been generated successfully.</p>
-            
-            <a id="access-link-btn" href="#" target="_blank" class="success-link-btn">🚀 ENTER VIP CHANNEL NOW</a>
-        </div>
-    </div>
-
     <script>
         const tg = window.Telegram.WebApp;
         tg.expand();
@@ -408,15 +457,20 @@
         function setTracker(step) {
             for (let i = 1; i <= 4; i++) {
                 const el = document.getElementById(`t${i}`);
-                if (i <= step) el.classList.add('active');
+                if (!el) continue;
+                if (typeof step === 'number' && i <= step) el.classList.add('active');
                 else el.classList.remove('active');
             }
         }
 
-        function switchStep(stepNum) {
+        function switchStep(stepVal) {
             document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
-            document.getElementById(`step-${stepNum}`).classList.add('active');
-            setTracker(stepNum);
+            if (typeof stepVal === 'number') {
+                document.getElementById(`step-${stepVal}`).classList.add('active');
+                setTracker(stepVal);
+            } else {
+                document.getElementById(`step-${stepVal}`).classList.add('active');
+            }
         }
 
         function chooseDestination(key, title) {
@@ -428,7 +482,7 @@
 
         function openDirectService(serviceName) {
             const myTelegram = "https://t.me/jerryy724";
-            const msg = encodeURIComponent(`Hello Jay Empire, I am inquiring about your special service: ${serviceName}`);
+            const msg = encodeURIComponent(`Hello Jay Empire, I am inquiring about: ${serviceName}`);
             window.location.href = `${myTelegram}?text=${msg}`;
         }
 
@@ -486,23 +540,12 @@
                     days: days
                 },
                 callback: function(response) {
-                    // Send to Telegram Bot in background
                     tg.sendData(JSON.stringify({
                         reference: response.reference,
                         channel_type: targetChannel,
                         days: days
                     }));
-
-                    // ALSO SHOW DIRECT ON-SCREEN LINK IMMEDIATELY SO USER NEVER GETS STUCK!
-                    document.getElementById('tracker-bar').style.display = 'none';
-                    
-                    // Direct invite link logic fallback
-                    let link = targetChannel === 'gold' 
-                        ? "https://t.me/+2m21mX5i6F85Y2I0" 
-                        : "https://t.me/+3n32nY6j7G96Z3J1";
-
-                    document.getElementById('access-link-btn').href = link;
-                    switchStep('success');
+                    tg.close();
                 },
                 onClose: function() {
                     alert('Checkout cancelled.');
