@@ -10,15 +10,20 @@ from pymongo import MongoClient
 from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo, Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 
+# ==============================================================================
+# ENVIRONMENT CONFIGURATION
+# ==============================================================================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 PAYSTACK_SECRET = os.getenv("PAYSTACK_SECRET_KEY")
 MONGO_URI = os.getenv("MONGO_URI")
 MINI_APP_URL = os.getenv("MINI_APP_URL", "https://jerryy724.github.io/telegram-paystack-bot/")
 
-GOLD_CHANNEL_ID = "-1004329655598"   # JAY GOLD MASTER VIP
-FOREX_CHANNEL_ID = "-1004451754852"  # JAY FX PREMIUM SIGNALS
+GOLD_CHANNEL_ID = os.getenv("GOLD_CHANNEL_ID")
+FOREX_CHANNEL_ID = os.getenv("FOREX_CHANNEL_ID")
 
-# SSL-ENCRYPTED MONGODB CONNECTION
+# ==============================================================================
+# MONGODB CONNECTION
+# ==============================================================================
 mongo_client = MongoClient(
     MONGO_URI,
     tlsCAFile=certifi.where(),
@@ -29,19 +34,26 @@ users_col = db["vip_users"]
 
 telegram_app = Application.builder().token(BOT_TOKEN).build()
 
-# GENERATE DYNAMIC 24-HOUR INVITE LINK VIA TELEGRAM API
+# ==============================================================================
+# TELEGRAM DYNAMIC LINK GENERATOR (24-HOUR EXPIRATION)
+# ==============================================================================
 async def generate_dynamic_link(bot: Bot, channel_type: str):
     target_channel = GOLD_CHANNEL_ID if channel_type == "gold" else FOREX_CHANNEL_ID
-    expire_timestamp = int((datetime.utcnow() + timedelta(hours=24)).timestamp())
     
+    # Expiration set to exactly 24 hours from current time
+    expire_dt = datetime.utcnow() + timedelta(hours=24)
+    
+    # Generate single-use, 24-hour invite link
     created_invite = await bot.create_chat_invite_link(
         chat_id=target_channel,
         member_limit=1,
-        expire_date=expire_timestamp
+        expire_date=expire_dt
     )
     return created_invite.invite_link
 
-# DIRECT MINI APP LAUNCH ON /start
+# ==============================================================================
+# BOT COMMAND HANDLERS
+# ==============================================================================
 async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("👑 Launch VIP Terminal App", web_app=WebAppInfo(url=MINI_APP_URL))]
@@ -54,7 +66,9 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 telegram_app.add_handler(CommandHandler("start", start_cmd))
 
-# DAILY EXPIRATION & REMINDER LOOP
+# ==============================================================================
+# SUBSCRIPTION TRACKER & REMINDER SCHEDULER
+# ==============================================================================
 async def check_expirations():
     bot = Bot(token=BOT_TOKEN)
     now = datetime.utcnow()
@@ -78,7 +92,7 @@ async def check_expirations():
         except Exception as e:
             print(f"Reminder Error ({user['telegram_id']}): {e}")
 
-    # Deactivate Expired Users
+    # Deactivate Expired Memberships
     expired_users = users_col.find({
         "is_active": True,
         "expires_at": {"$lte": now}
@@ -88,7 +102,7 @@ async def check_expirations():
         try:
             await bot.send_message(
                 chat_id=user["telegram_id"],
-                text="⚠️ <b>Jay Empire VIP Notice:</b> Your VIP access period has expired. Please renew inside the VIP Terminal."
+                text="⚠️ <b>Jay Empire VIP Notice:</b> Your VIP access period has ended. Please renew inside the VIP Terminal."
             )
         except Exception as e:
             print(f"Deactivation Notice Error ({user['telegram_id']}): {e}")
@@ -96,7 +110,7 @@ async def check_expirations():
 async def scheduler_loop():
     while True:
         await check_expirations()
-        await asyncio.sleep(86400) # Runs once every 24 hours
+        await asyncio.sleep(86400) # Runs daily
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -110,7 +124,9 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
+# ==============================================================================
 # PAYSTACK WEBHOOK RECEIVER
+# ==============================================================================
 @app.post("/paystack-webhook")
 async def paystack_webhook(request: Request):
     payload = await request.json()
@@ -126,7 +142,7 @@ async def paystack_webhook(request: Request):
             now = datetime.utcnow()
             expires_at = now + timedelta(days=days)
             
-            # Save to Database
+            # 1. Update/Insert into MongoDB
             users_col.update_one(
                 {"telegram_id": tg_id, "channel_type": channel_type},
                 {
@@ -143,7 +159,7 @@ async def paystack_webhook(request: Request):
                 upsert=True
             )
             
-            # GENERATE FRESH INVITE LINK & SEND TO CHAT
+            # 2. Generate 24-Hour Single-Use Invite Link & Send via Bot
             bot = Bot(token=BOT_TOKEN)
             try:
                 fresh_invite = await generate_dynamic_link(bot, channel_type)
@@ -152,11 +168,11 @@ async def paystack_webhook(request: Request):
                 btn = InlineKeyboardMarkup([[InlineKeyboardButton(f"🚀 Join {channel_name}", url=fresh_invite)]])
                 await bot.send_message(
                     chat_id=tg_id,
-                    text=f"🎉 <b>PAYMENT VERIFIED SUCCESSFULLY!</b>\n\nWelcome to <b>{channel_name}</b>. Tap below to join:\n\n🔗 <b>Your Invite Link:</b> {fresh_invite}\n\n<i>(Link valid for 24 hours)</i>",
+                    text=f"🎉 <b>PAYMENT VERIFIED SUCCESSFULLY!</b>\n\nWelcome to <b>{channel_name}</b>. Tap below to enter immediately:\n\n🔗 <b>Your Personal Link:</b> {fresh_invite}\n\n<i>(Single-use link valid for 24 hours)</i>",
                     parse_mode="HTML",
                     reply_markup=btn
                 )
             except Exception as e:
-                print(f"Error sending invite link to chat: {e}")
+                print(f"Error issuing invite link to user {tg_id}: {e}")
 
     return {"status": "success"}
