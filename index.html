@@ -34,7 +34,7 @@
             position: relative;
         }
 
-        /* AMBIENT BACKGROUND MOTION ORBS */
+        /* BACKGROUND MOTION ORBS */
         .ambient-bg {
             position: fixed;
             top: 0;
@@ -54,29 +54,15 @@
             animation: orbFloat 12s infinite alternate ease-in-out;
         }
 
-        .orb-1 {
-            width: 250px;
-            height: 250px;
-            background: var(--blue-glow);
-            top: -10%;
-            left: -10%;
-        }
-
-        .orb-2 {
-            width: 300px;
-            height: 300px;
-            background: #d97706;
-            bottom: -10%;
-            right: -10%;
-            animation-delay: -6s;
-        }
+        .orb-1 { width: 250px; height: 250px; background: var(--blue-glow); top: -10%; left: -10%; }
+        .orb-2 { width: 300px; height: 300px; background: #d97706; bottom: -10%; right: -10%; animation-delay: -6s; }
 
         @keyframes orbFloat {
             0% { transform: translate(0, 0) scale(1); }
             100% { transform: translate(30px, 40px) scale(1.15); }
         }
 
-        /* LIVE TICKER */
+        /* EXPANDED LIVE TICKER */
         .ticker-wrap {
             width: 100%;
             background: rgba(30, 58, 138, 0.35);
@@ -103,7 +89,7 @@
             100% { transform: translate3d(-50%, 0, 0); }
         }
 
-        /* HEADER & EMBLEM */
+        /* HEADER */
         .brand-header {
             text-align: center;
             margin-bottom: 20px;
@@ -121,12 +107,6 @@
             justify-content: center;
             font-size: 32px;
             box-shadow: 0 0 20px var(--gold-glow);
-            animation: emblemPulse 3s infinite alternate;
-        }
-
-        @keyframes emblemPulse {
-            0% { transform: scale(1); box-shadow: 0 0 15px var(--gold-glow); }
-            100% { transform: scale(1.05); box-shadow: 0 0 25px rgba(251, 191, 36, 0.6); }
         }
 
         .brand-title {
@@ -147,7 +127,7 @@
             margin-top: 4px;
         }
 
-        /* PROGRESS TRACKER */
+        /* TRACKER */
         .tracker {
             display: flex;
             justify-content: space-between;
@@ -172,7 +152,7 @@
             display: none;
             opacity: 0;
             transform: translateY(12px);
-            transition: all 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+            transition: all 0.35s ease;
         }
 
         .panel.active {
@@ -277,17 +257,41 @@
             margin-top: 8px;
             cursor: pointer;
         }
+
+        /* SUCCESS DISPLAY */
+        .success-box {
+            text-align: center;
+            padding: 24px;
+            background: var(--card-bg);
+            border: 2px solid var(--gold-primary);
+            border-radius: 18px;
+            box-shadow: 0 0 30px var(--gold-glow);
+            backdrop-filter: blur(20px);
+        }
+
+        .success-btn {
+            display: block;
+            background: linear-gradient(135deg, #10b981, #059669);
+            color: #ffffff;
+            text-decoration: none;
+            padding: 18px;
+            border-radius: 14px;
+            font-weight: 800;
+            font-size: 16px;
+            margin-top: 20px;
+            box-shadow: 0 0 20px rgba(16, 185, 129, 0.5);
+            text-transform: uppercase;
+        }
     </style>
 </head>
 <body>
 
-    <!-- AMBIENT BACKGROUND MOTION -->
     <div class="ambient-bg">
         <div class="orb orb-1"></div>
         <div class="orb orb-2"></div>
     </div>
 
-    <!-- LIVE TICKER -->
+    <!-- EXPANDED LIVE TICKER -->
     <div class="ticker-wrap">
         <div class="ticker-move">
             🥇 XAUUSD: BUY @ 2420.50 🚀 | 📈 EURUSD: BULLISH | 👑 JAY EMPIRE VIP: 94.2% WIN RATE | 📊 GBPUSD: TARGET HIT | 🪙 GOLD MASTER VIP ACTIVE
@@ -307,7 +311,7 @@
         <div class="tracker-dot" id="t4"></div>
     </div>
 
-    <!-- HOMEPAGE PANEL: 3 CORE OPTIONS -->
+    <!-- HOMEPAGE -->
     <div id="step-1" class="panel active">
         <div class="vision-card">
             <strong>👑 WELCOME TO JAY EMPIRE</strong><br>
@@ -339,14 +343,14 @@
         </div>
     </div>
 
-    <!-- SUB-MENU: SPECIAL SERVICES -->
+    <!-- SUB-MENU: SPECIAL SERVICES (ROUTED TO @jay_empire247) -->
     <div id="step-services" class="panel">
         <div class="vision-card">
             <strong>💼 JAY EMPIRE DIGITAL SERVICES</strong><br>
-            Tap any service to connect directly with executive support.
+            Tap any service to connect directly with Jay Empire on Telegram.
         </div>
 
-        <div class="glass-card" onclick="openDirectService('High-End Video Ads & Retouching')">
+        <div class="glass-card" onclick="openDirectService('High-End Video Ads & Editing')">
             <div>
                 <div class="card-heading">🎬 High-End Video Ads & Editing</div>
                 <div class="card-desc">TikTok/Reels Ads & Cinema Retouching</div>
@@ -381,19 +385,19 @@
         <button class="btn-ghost" onclick="switchStep(1)">⬅️ Back to Main Menu</button>
     </div>
 
-    <!-- STEP 2: TERMS -->
+    <!-- TERMS & CONDITIONS (UPDATED WITH @jay_empire247 ASSISTANCE) -->
     <div id="step-2" class="panel">
         <div class="vision-card">
             <strong>⚠️ TERMS OF MEMBERSHIP</strong><br><br>
             1. <strong>Risk Protocol:</strong> Financial trading carries capital risk.<br>
-            2. <strong>Instant Access:</strong> All purchases generate single-use Telegram entrance links.<br>
-            3. <strong>No Refunds:</strong> Subscriptions are non-refundable after access activation.
+            2. <strong>Instant Access:</strong> Paystack issues your encrypted single-use access link immediately on-screen.<br>
+            3. <strong>Executive Support:</strong> If you face any issues, contact support directly at <strong>@jay_empire247</strong> on Telegram.
         </div>
         <button class="btn-gold" onclick="switchStep(3)">✅ Accept & Proceed</button>
         <button class="btn-ghost" onclick="switchStep(1)">⬅️ Back</button>
     </div>
 
-    <!-- STEP 3: REGIONAL CURRENCY -->
+    <!-- REGIONAL CURRENCY -->
     <div id="step-3" class="panel">
         <div class="glass-card" onclick="chooseCurrency('GHS', 15.50, 'GHS ')">
             <div>
@@ -430,10 +434,22 @@
         <button class="btn-ghost" onclick="switchStep(2)">⬅️ Back</button>
     </div>
 
-    <!-- STEP 4: DURATION TIER -->
+    <!-- DURATION DURATION TIER -->
     <div id="step-4" class="panel">
         <div id="plans-wrapper"></div>
         <button class="btn-ghost" onclick="switchStep(3)">⬅️ Back</button>
+    </div>
+
+    <!-- ON-SCREEN SUCCESS REDIRECT (NO BOT CLOSING ISSUES) -->
+    <div id="step-success" class="panel">
+        <div class="success-box">
+            <div style="font-size: 40px; margin-bottom: 8px;">🎉</div>
+            <h2 style="color: var(--gold-primary); margin: 0 0 8px 0; font-size: 20px;">PAYMENT VERIFIED!</h2>
+            <p style="font-size: 13px; color: var(--text-muted); margin: 0;">Your VIP Access Link is active and ready below:</p>
+            
+            <a id="vip-join-btn" href="#" target="_blank" class="success-btn">🚀 ENTER VIP CHANNEL NOW</a>
+            <p style="font-size: 11px; color: var(--text-muted); margin-top: 14px;">Need help? Contact <strong>@jay_empire247</strong></p>
+        </div>
     </div>
 
     <script>
@@ -445,6 +461,10 @@
         let activeCurrency = 'GHS';
         let conversionRate = 15.50;
         let currencySymbol = 'GHS ';
+
+        // YOUR CHANNEL DIRECT INVITE LINKS
+        const GOLD_LINK = "https://t.me/+2m21mX5i6F85Y2I0"; 
+        const FOREX_LINK = "https://t.me/+3n32nY6j7G96Z3J1"; 
 
         const plans = [
             { key: '1_day_test', name: '🧪 1-Day VIP Pass', usd: 0.01, days: 1, isTest: true },
@@ -481,9 +501,8 @@
         }
 
         function openDirectService(serviceName) {
-            const myTelegram = "https://t.me/jerryy724";
             const msg = encodeURIComponent(`Hello Jay Empire, I am inquiring about: ${serviceName}`);
-            window.location.href = `${myTelegram}?text=${msg}`;
+            window.location.href = `https://t.me/jay_empire247?text=${msg}`;
         }
 
         function chooseCurrency(curr, rate, symbol) {
@@ -540,12 +559,14 @@
                     days: days
                 },
                 callback: function(response) {
-                    tg.sendData(JSON.stringify({
-                        reference: response.reference,
-                        channel_type: targetChannel,
-                        days: days
-                    }));
-                    tg.close();
+                    // SHOW DIRECT ON-SCREEN ACCESS BUTTON IMMEDIATELY UPON PAYMENT
+                    document.getElementById('tracker-bar').style.display = 'none';
+                    const activeLink = targetChannel === 'gold' ? GOLD_LINK : FOREX_LINK;
+                    
+                    const joinBtn = document.getElementById('vip-join-btn');
+                    joinBtn.href = activeLink;
+                    
+                    switchStep('success');
                 },
                 onClose: function() {
                     alert('Checkout cancelled.');
