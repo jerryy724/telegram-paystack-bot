@@ -21,6 +21,10 @@ MINI_APP_URL = os.getenv("MINI_APP_URL", "https://jerryy724.github.io/telegram-p
 GOLD_CHANNEL_ID = os.getenv("GOLD_CHANNEL_ID")
 FOREX_CHANNEL_ID = os.getenv("FOREX_CHANNEL_ID")
 
+# YOUR PRIMARY CHANNEL LINKS (FALLBACKS)
+GOLD_PRIMARY_LINK = "https://t.me/+env-Zrui2ykwYjg8"
+FOREX_PRIMARY_LINK = "https://t.me/+njii3OAHlqI3MjQ8"
+
 # ==============================================================================
 # MONGODB CONNECTION
 # ==============================================================================
@@ -40,16 +44,21 @@ telegram_app = Application.builder().token(BOT_TOKEN).build()
 async def generate_dynamic_link(bot: Bot, channel_type: str):
     target_channel = GOLD_CHANNEL_ID if channel_type == "gold" else FOREX_CHANNEL_ID
     
-    # Expiration set to exactly 24 hours from current time
-    expire_dt = datetime.utcnow() + timedelta(hours=24)
+    # If environment variables for channel IDs are configured, generate single-use 24h link
+    if target_channel:
+        try:
+            expire_dt = datetime.utcnow() + timedelta(hours=24)
+            created_invite = await bot.create_chat_invite_link(
+                chat_id=target_channel,
+                member_limit=1,
+                expire_date=expire_dt
+            )
+            return created_invite.invite_link
+        except Exception as e:
+            print(f"⚠️ Dynamic link generation error: {e}. Falling back to primary link.")
     
-    # Generate single-use, 24-hour invite link
-    created_invite = await bot.create_chat_invite_link(
-        chat_id=target_channel,
-        member_limit=1,
-        expire_date=expire_dt
-    )
-    return created_invite.invite_link
+    # Fallback to direct primary links
+    return GOLD_PRIMARY_LINK if channel_type == "gold" else FOREX_PRIMARY_LINK
 
 # ==============================================================================
 # BOT COMMAND HANDLERS
@@ -159,16 +168,16 @@ async def paystack_webhook(request: Request):
                 upsert=True
             )
             
-            # 2. Generate 24-Hour Single-Use Invite Link & Send via Bot
+            # 2. Generate Invite Link & Send via Bot
             bot = Bot(token=BOT_TOKEN)
             try:
-                fresh_invite = await generate_dynamic_link(bot, channel_type)
+                invite_url = await generate_dynamic_link(bot, channel_type)
                 channel_name = "JAY GOLD MASTER VIP" if channel_type == "gold" else "JAY FX PREMIUM SIGNALS"
                 
-                btn = InlineKeyboardMarkup([[InlineKeyboardButton(f"🚀 Join {channel_name}", url=fresh_invite)]])
+                btn = InlineKeyboardMarkup([[InlineKeyboardButton(f"🚀 Join {channel_name}", url=invite_url)]])
                 await bot.send_message(
                     chat_id=tg_id,
-                    text=f"🎉 <b>PAYMENT VERIFIED SUCCESSFULLY!</b>\n\nWelcome to <b>{channel_name}</b>. Tap below to enter immediately:\n\n🔗 <b>Your Personal Link:</b> {fresh_invite}\n\n<i>(Single-use link valid for 24 hours)</i>",
+                    text=f"🎉 <b>PAYMENT VERIFIED SUCCESSFULLY!</b>\n\nWelcome to <b>{channel_name}</b>. Tap below to enter immediately:\n\n🔗 <b>Your Personal Link:</b> {invite_url}\n\n<i>(Single-use link valid for 24 hours)</i>",
                     parse_mode="HTML",
                     reply_markup=btn
                 )
