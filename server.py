@@ -18,7 +18,7 @@ PAYSTACK_SECRET = os.getenv("PAYSTACK_SECRET_KEY")
 MONGO_URI = os.getenv("MONGO_URI")
 MINI_APP_URL = os.getenv("MINI_APP_URL", "https://jerryy724.github.io/telegram-paystack-bot/")
 
-# OFFICIAL PERMANENT CHANNEL INVITE LINKS
+# OFFICIAL PERMANENT SINGLE CHANNEL INVITE LINKS
 GOLD_PRIMARY_LINK = "https://t.me/+env-Zrui2ykwYjg8"
 FOREX_PRIMARY_LINK = "https://t.me/+njii3OAHlqI3MjQ8"
 
@@ -42,7 +42,7 @@ telegram_app = Application.builder().token(BOT_TOKEN).build()
 async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if user:
-        # Track lead for prospective follow-ups
+        # Log prospective lead into MongoDB for follow-up reminders
         leads_col.update_one(
             {"telegram_id": user.id},
             {
@@ -69,13 +69,13 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 telegram_app.add_handler(CommandHandler("start", start_cmd))
 
 # ==============================================================================
-# SUBSCRIPTION & LEAD REMINDER SCHEDULER
+# AUTOMATED REMINDERS & SCHEDULER
 # ==============================================================================
 async def check_expirations_and_leads():
     bot = Bot(token=BOT_TOKEN)
     now = datetime.utcnow()
     
-    # 1. Lead Follow-up (48 Hours After /start)
+    # 1. Prospective Lead Follow-up Reminder (48 Hours After /start)
     lead_cutoff = now - timedelta(hours=48)
     unconverted_leads = leads_col.find({
         "converted": False,
@@ -103,7 +103,7 @@ async def check_expirations_and_leads():
         except Exception as e:
             print(f"Lead Follow-up Error ({lead['telegram_id']}): {e}")
 
-    # 2. 3-Day Renewal Reminders
+    # 2. VIP 3-Day Renewal Reminder
     reminder_target = now + timedelta(days=3)
     expiring_soon = users_col.find({
         "is_active": True,
@@ -122,7 +122,7 @@ async def check_expirations_and_leads():
         except Exception as e:
             print(f"Renewal Reminder Error ({user['telegram_id']}): {e}")
 
-    # 3. Deactivate Expired Memberships
+    # 3. Deactivate Expired VIP Subscriptions
     expired_users = users_col.find({
         "is_active": True,
         "expires_at": {"$lte": now}
@@ -140,7 +140,7 @@ async def check_expirations_and_leads():
 async def scheduler_loop():
     while True:
         await check_expirations_and_leads()
-        await asyncio.sleep(86400) # Runs daily
+        await asyncio.sleep(86400) # Runs daily check
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -154,7 +154,9 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
-# Health Check Route for Keep-Alive Ping
+# ==============================================================================
+# CRON-JOB KEEP-ALIVE ROUTE (FIXES THE 404 NOT FOUND ERROR)
+# ==============================================================================
 @app.get("/")
 async def health_check():
     return {"status": "active", "service": "Jay Empire VIP Backend"}
@@ -177,7 +179,7 @@ async def paystack_webhook(request: Request):
             now = datetime.utcnow()
             expires_at = now + timedelta(days=days)
             
-            # Save into MongoDB database
+            # Save or update record in MongoDB
             users_col.update_one(
                 {"telegram_id": tg_id, "channel_type": channel_type},
                 {
@@ -194,13 +196,13 @@ async def paystack_webhook(request: Request):
                 upsert=True
             )
             
-            # Mark lead as converted
+            # Mark lead as converted to halt follow-ups
             leads_col.update_one(
                 {"telegram_id": tg_id},
                 {"$set": {"converted": True}}
             )
             
-            # Deliver official primary link via Telegram chat
+            # Deliver official single primary link via Telegram chat
             bot = Bot(token=BOT_TOKEN)
             try:
                 target_link = GOLD_PRIMARY_LINK if channel_type == "gold" else FOREX_PRIMARY_LINK
