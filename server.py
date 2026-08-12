@@ -18,7 +18,7 @@ PAYSTACK_SECRET = os.getenv("PAYSTACK_SECRET_KEY")
 MONGO_URI = os.getenv("MONGO_URI")
 MINI_APP_URL = os.getenv("MINI_APP_URL", "https://jerryy724.github.io/telegram-paystack-bot/")
 
-# PERMANENT OFFICIAL CHANNEL LINKS
+# OFFICIAL PERMANENT CHANNEL INVITE LINKS
 GOLD_PRIMARY_LINK = "https://t.me/+env-Zrui2ykwYjg8"
 FOREX_PRIMARY_LINK = "https://t.me/+njii3OAHlqI3MjQ8"
 
@@ -42,7 +42,7 @@ telegram_app = Application.builder().token(BOT_TOKEN).build()
 async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if user:
-        # Track user lead for abandoned checkout follow-ups
+        # Track lead for prospective follow-ups
         leads_col.update_one(
             {"telegram_id": user.id},
             {
@@ -75,7 +75,7 @@ async def check_expirations_and_leads():
     bot = Bot(token=BOT_TOKEN)
     now = datetime.utcnow()
     
-    # 1. Non-converted lead follow-up (48 Hours after /start)
+    # 1. Lead Follow-up (48 Hours After /start)
     lead_cutoff = now - timedelta(hours=48)
     unconverted_leads = leads_col.find({
         "converted": False,
@@ -103,7 +103,7 @@ async def check_expirations_and_leads():
         except Exception as e:
             print(f"Lead Follow-up Error ({lead['telegram_id']}): {e}")
 
-    # 2. 3-Day VIP Renewal Reminders
+    # 2. 3-Day Renewal Reminders
     reminder_target = now + timedelta(days=3)
     expiring_soon = users_col.find({
         "is_active": True,
@@ -154,6 +154,11 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
+# Health Check Route for Keep-Alive Ping
+@app.get("/")
+async def health_check():
+    return {"status": "active", "service": "Jay Empire VIP Backend"}
+
 # ==============================================================================
 # PAYSTACK WEBHOOK RECEIVER
 # ==============================================================================
@@ -172,7 +177,7 @@ async def paystack_webhook(request: Request):
             now = datetime.utcnow()
             expires_at = now + timedelta(days=days)
             
-            # Save transaction & expiration data into MongoDB
+            # Save into MongoDB database
             users_col.update_one(
                 {"telegram_id": tg_id, "channel_type": channel_type},
                 {
@@ -195,7 +200,7 @@ async def paystack_webhook(request: Request):
                 {"$set": {"converted": True}}
             )
             
-            # Send official permanent channel link directly to user
+            # Deliver official primary link via Telegram chat
             bot = Bot(token=BOT_TOKEN)
             try:
                 target_link = GOLD_PRIMARY_LINK if channel_type == "gold" else FOREX_PRIMARY_LINK
@@ -209,6 +214,6 @@ async def paystack_webhook(request: Request):
                     reply_markup=btn
                 )
             except Exception as e:
-                print(f"Error delivering notification to user {tg_id}: {e}")
+                print(f"Error sending chat notification to {tg_id}: {e}")
 
     return {"status": "success"}
