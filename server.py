@@ -18,7 +18,7 @@ PAYSTACK_SECRET = os.getenv("PAYSTACK_SECRET_KEY")
 MONGO_URI = os.getenv("MONGO_URI")
 MINI_APP_URL = os.getenv("MINI_APP_URL", "https://jerryy724.github.io/telegram-paystack-bot/")
 
-# OFFICIAL PERMANENT CHANNEL INVITE LINKS
+# PERMANENT OFFICIAL CHANNEL LINKS
 GOLD_PRIMARY_LINK = "https://t.me/+env-Zrui2ykwYjg8"
 FOREX_PRIMARY_LINK = "https://t.me/+njii3OAHlqI3MjQ8"
 
@@ -42,7 +42,7 @@ telegram_app = Application.builder().token(BOT_TOKEN).build()
 async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if user:
-        # Log or update lead for abandoned checkout reminders
+        # Track user lead for abandoned checkout follow-ups
         leads_col.update_one(
             {"telegram_id": user.id},
             {
@@ -75,7 +75,7 @@ async def check_expirations_and_leads():
     bot = Bot(token=BOT_TOKEN)
     now = datetime.utcnow()
     
-    # 1. Remind Non-Converted Leads (48 Hours After /start)
+    # 1. Non-converted lead follow-up (48 Hours after /start)
     lead_cutoff = now - timedelta(hours=48)
     unconverted_leads = leads_col.find({
         "converted": False,
@@ -103,7 +103,7 @@ async def check_expirations_and_leads():
         except Exception as e:
             print(f"Lead Follow-up Error ({lead['telegram_id']}): {e}")
 
-    # 2. Send 3-Day VIP Renewal Reminders
+    # 2. 3-Day VIP Renewal Reminders
     reminder_target = now + timedelta(days=3)
     expiring_soon = users_col.find({
         "is_active": True,
@@ -172,7 +172,7 @@ async def paystack_webhook(request: Request):
             now = datetime.utcnow()
             expires_at = now + timedelta(days=days)
             
-            # Update database record
+            # Save transaction & expiration data into MongoDB
             users_col.update_one(
                 {"telegram_id": tg_id, "channel_type": channel_type},
                 {
@@ -189,13 +189,13 @@ async def paystack_webhook(request: Request):
                 upsert=True
             )
             
-            # Mark lead as converted so follow-ups stop
+            # Mark lead as converted
             leads_col.update_one(
                 {"telegram_id": tg_id},
                 {"$set": {"converted": True}}
             )
             
-            # Issue official primary link via Telegram Chat
+            # Send official permanent channel link directly to user
             bot = Bot(token=BOT_TOKEN)
             try:
                 target_link = GOLD_PRIMARY_LINK if channel_type == "gold" else FOREX_PRIMARY_LINK
@@ -209,6 +209,6 @@ async def paystack_webhook(request: Request):
                     reply_markup=btn
                 )
             except Exception as e:
-                print(f"Error issuing chat notification to user {tg_id}: {e}")
+                print(f"Error delivering notification to user {tg_id}: {e}")
 
     return {"status": "success"}
