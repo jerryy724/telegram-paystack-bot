@@ -18,10 +18,7 @@ PAYSTACK_SECRET = os.getenv("PAYSTACK_SECRET_KEY")
 MONGO_URI = os.getenv("MONGO_URI")
 MINI_APP_URL = os.getenv("MINI_APP_URL", "https://jerryy724.github.io/telegram-paystack-bot/")
 
-GOLD_CHANNEL_ID = os.getenv("GOLD_CHANNEL_ID")
-FOREX_CHANNEL_ID = os.getenv("FOREX_CHANNEL_ID")
-
-# YOUR PRIMARY CHANNEL LINKS (FALLBACKS)
+# OFFICIAL PERMANENT CHANNEL INVITE LINKS
 GOLD_PRIMARY_LINK = "https://t.me/+env-Zrui2ykwYjg8"
 FOREX_PRIMARY_LINK = "https://t.me/+njii3OAHlqI3MjQ8"
 
@@ -35,35 +32,31 @@ mongo_client = MongoClient(
 )
 db = mongo_client["jay_empire_db"]
 users_col = db["vip_users"]
+leads_col = db["leads"]
 
 telegram_app = Application.builder().token(BOT_TOKEN).build()
-
-# ==============================================================================
-# TELEGRAM DYNAMIC LINK GENERATOR (24-HOUR EXPIRATION)
-# ==============================================================================
-async def generate_dynamic_link(bot: Bot, channel_type: str):
-    target_channel = GOLD_CHANNEL_ID if channel_type == "gold" else FOREX_CHANNEL_ID
-    
-    # If environment variables for channel IDs are configured, generate single-use 24h link
-    if target_channel:
-        try:
-            expire_dt = datetime.utcnow() + timedelta(hours=24)
-            created_invite = await bot.create_chat_invite_link(
-                chat_id=target_channel,
-                member_limit=1,
-                expire_date=expire_dt
-            )
-            return created_invite.invite_link
-        except Exception as e:
-            print(f"⚠️ Dynamic link generation error: {e}. Falling back to primary link.")
-    
-    # Fallback to direct primary links
-    return GOLD_PRIMARY_LINK if channel_type == "gold" else FOREX_PRIMARY_LINK
 
 # ==============================================================================
 # BOT COMMAND HANDLERS
 # ==============================================================================
 async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    if user:
+        # Log or update lead for abandoned checkout reminders
+        leads_col.update_one(
+            {"telegram_id": user.id},
+            {
+                "$setOnInsert": {
+                    "telegram_id": user.id,
+                    "first_name": user.first_name,
+                    "started_at": datetime.utcnow(),
+                    "converted": False,
+                    "followup_sent": False
+                }
+            },
+            upsert=True
+        )
+
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("👑 Launch VIP Terminal App", web_app=WebAppInfo(url=MINI_APP_URL))]
     ])
@@ -76,13 +69,41 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 telegram_app.add_handler(CommandHandler("start", start_cmd))
 
 # ==============================================================================
-# SUBSCRIPTION TRACKER & REMINDER SCHEDULER
+# SUBSCRIPTION & LEAD REMINDER SCHEDULER
 # ==============================================================================
-async def check_expirations():
+async def check_expirations_and_leads():
     bot = Bot(token=BOT_TOKEN)
     now = datetime.utcnow()
     
-    # 3-Day Renewal Reminder
+    # 1. Remind Non-Converted Leads (48 Hours After /start)
+    lead_cutoff = now - timedelta(hours=48)
+    unconverted_leads = leads_col.find({
+        "converted": False,
+        "followup_sent": False,
+        "started_at": {"$lte": lead_cutoff}
+    })
+    
+    for lead in unconverted_leads:
+        try:
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("👑 Enter VIP Terminal", web_app=WebAppInfo(url=MINI_APP_URL))]
+            ])
+            await bot.send_message(
+                chat_id=lead["telegram_id"],
+                text=(
+                    "👑 <b>Jay Empire VIP Market Alert</b>\n\n"
+                    "High-precision trade setups and institutional insights are active right now. "
+                    "Don't miss the next execution wave.\n\n"
+                    "Tap below to launch your VIP Terminal and lock in your membership:"
+                ),
+                parse_mode="HTML",
+                reply_markup=kb
+            )
+            leads_col.update_one({"_id": lead["_id"]}, {"$set": {"followup_sent": True}})
+        except Exception as e:
+            print(f"Lead Follow-up Error ({lead['telegram_id']}): {e}")
+
+    # 2. Send 3-Day VIP Renewal Reminders
     reminder_target = now + timedelta(days=3)
     expiring_soon = users_col.find({
         "is_active": True,
@@ -99,9 +120,9 @@ async def check_expirations():
             )
             users_col.update_one({"_id": user["_id"]}, {"$set": {"reminder_sent": True}})
         except Exception as e:
-            print(f"Reminder Error ({user['telegram_id']}): {e}")
+            print(f"Renewal Reminder Error ({user['telegram_id']}): {e}")
 
-    # Deactivate Expired Memberships
+    # 3. Deactivate Expired Memberships
     expired_users = users_col.find({
         "is_active": True,
         "expires_at": {"$lte": now}
@@ -114,11 +135,11 @@ async def check_expirations():
                 text="⚠️ <b>Jay Empire VIP Notice:</b> Your VIP access period has ended. Please renew inside the VIP Terminal."
             )
         except Exception as e:
-            print(f"Deactivation Notice Error ({user['telegram_id']}): {e}")
+            print(f"Deactivation Error ({user['telegram_id']}): {e}")
 
 async def scheduler_loop():
     while True:
-        await check_expirations()
+        await check_expirations_and_leads()
         await asyncio.sleep(86400) # Runs daily
 
 @asynccontextmanager
@@ -151,7 +172,7 @@ async def paystack_webhook(request: Request):
             now = datetime.utcnow()
             expires_at = now + timedelta(days=days)
             
-            # 1. Update/Insert into MongoDB
+            # Update database record
             users_col.update_one(
                 {"telegram_id": tg_id, "channel_type": channel_type},
                 {
@@ -168,20 +189,26 @@ async def paystack_webhook(request: Request):
                 upsert=True
             )
             
-            # 2. Generate Invite Link & Send via Bot
+            # Mark lead as converted so follow-ups stop
+            leads_col.update_one(
+                {"telegram_id": tg_id},
+                {"$set": {"converted": True}}
+            )
+            
+            # Issue official primary link via Telegram Chat
             bot = Bot(token=BOT_TOKEN)
             try:
-                invite_url = await generate_dynamic_link(bot, channel_type)
+                target_link = GOLD_PRIMARY_LINK if channel_type == "gold" else FOREX_PRIMARY_LINK
                 channel_name = "JAY GOLD MASTER VIP" if channel_type == "gold" else "JAY FX PREMIUM SIGNALS"
                 
-                btn = InlineKeyboardMarkup([[InlineKeyboardButton(f"🚀 Join {channel_name}", url=invite_url)]])
+                btn = InlineKeyboardMarkup([[InlineKeyboardButton(f"🚀 Enter {channel_name}", url=target_link)]])
                 await bot.send_message(
                     chat_id=tg_id,
-                    text=f"🎉 <b>PAYMENT VERIFIED SUCCESSFULLY!</b>\n\nWelcome to <b>{channel_name}</b>. Tap below to enter immediately:\n\n🔗 <b>Your Personal Link:</b> {invite_url}\n\n<i>(Single-use link valid for 24 hours)</i>",
+                    text=f"🎉 <b>PAYMENT VERIFIED SUCCESSFULLY!</b>\n\nWelcome to <b>{channel_name}</b>. Tap below to enter immediately:\n\n🔗 <b>Your Access Link:</b> {target_link}",
                     parse_mode="HTML",
                     reply_markup=btn
                 )
             except Exception as e:
-                print(f"Error issuing invite link to user {tg_id}: {e}")
+                print(f"Error issuing chat notification to user {tg_id}: {e}")
 
     return {"status": "success"}
