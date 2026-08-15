@@ -1,14 +1,11 @@
 import os
-import json
-import httpx
-import asyncio
 import certifi
 from datetime import datetime, timedelta
 from fastapi import FastAPI, Request
 from contextlib import asynccontextmanager
 from pymongo import MongoClient
 from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo, Update
-from telegram.ext import Application, CommandHandler, ContextTypes
+from telegram.ext import Application, CommandHandler
 
 # ==============================================================================
 # ENVIRONMENT CONFIGURATION
@@ -17,6 +14,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 PAYSTACK_SECRET = os.getenv("PAYSTACK_SECRET_KEY")
 MONGO_URI = os.getenv("MONGO_URI")
 MINI_APP_URL = os.getenv("MINI_APP_URL", "https://jerryy724.github.io/telegram-paystack-bot/")
+RENDER_URL = os.getenv("RENDER_EXTERNAL_URL", "https://telegram-paystack-bot-415x.onrender.com")
 
 # OFFICIAL PERMANENT SINGLE CHANNEL INVITE LINKS
 GOLD_PRIMARY_LINK = "https://t.me/+env-Zrui2ykwYjg8"
@@ -34,12 +32,13 @@ db = mongo_client["jay_empire_db"]
 users_col = db["vip_users"]
 leads_col = db["leads"]
 
+# Initialize Telegram Application
 telegram_app = Application.builder().token(BOT_TOKEN).build()
 
 # ==============================================================================
 # BOT COMMAND HANDLERS
 # ==============================================================================
-async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def start_cmd(update: Update, context):
     user = update.effective_user
     if user:
         # Log prospective lead into MongoDB for follow-up reminders
@@ -142,24 +141,46 @@ async def scheduler_loop():
         await check_expirations_and_leads()
         await asyncio.sleep(86400) # Runs daily check
 
+# ==============================================================================
+# FASTAPI LIFESPAN MANAGER
+# ==============================================================================
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Initialize application
     await telegram_app.initialize()
     await telegram_app.start()
-    await telegram_app.updater.start_polling()
+    
+    # Configure Webhook automatically on startup
+    webhook_target = f"{RENDER_URL.rstrip('/')}/telegram-webhook"
+    bot = Bot(token=BOT_TOKEN)
+    await bot.set_webhook(url=webhook_target, drop_pending_updates=True)
+    print(f"Telegram Webhook configured to: {webhook_target}")
+    
+    # Start automated background tasks
     asyncio.create_task(scheduler_loop())
+    
     yield
-    await telegram_app.updater.stop()
+    
     await telegram_app.stop()
 
 app = FastAPI(lifespan=lifespan)
 
 # ==============================================================================
-# CRON-JOB KEEP-ALIVE ROUTE (FIXES THE 404 NOT FOUND ERROR)
+# CRON-JOB KEEP-ALIVE ROUTE
 # ==============================================================================
 @app.get("/")
 async def health_check():
     return {"status": "active", "service": "Jay Empire VIP Backend"}
+
+# ==============================================================================
+# TELEGRAM WEBHOOK ENDPOINT
+# ==============================================================================
+@app.post("/telegram-webhook")
+async def telegram_webhook(request: Request):
+    data = await request.json()
+    update = Update.de_json(data, telegram_app.bot)
+    await telegram_app.process_update(update)
+    return {"status": "ok"}
 
 # ==============================================================================
 # PAYSTACK WEBHOOK RECEIVER
