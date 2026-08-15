@@ -22,12 +22,13 @@ GOLD_PRIMARY_LINK = "https://t.me/+env-Zrui2ykwYjg8"
 FOREX_PRIMARY_LINK = "https://t.me/+njii3OAHlqI3MjQ8"
 
 # ==============================================================================
-# MONGODB CONNECTION
+# MONGODB CONNECTION (Optimized with Timeout)
 # ==============================================================================
 mongo_client = MongoClient(
     MONGO_URI,
     tlsCAFile=certifi.where(),
-    tlsAllowInvalidCertificates=True
+    tlsAllowInvalidCertificates=True,
+    serverSelectionTimeoutMS=5000  # Prevents bot from freezing if DB is slow
 )
 db = mongo_client["jay_empire_db"]
 users_col = db["vip_users"]
@@ -42,21 +43,25 @@ telegram_app = Application.builder().token(BOT_TOKEN).build()
 async def start_cmd(update: Update, context):
     user = update.effective_user
     if user:
-        # Log prospective lead into MongoDB for follow-up reminders
-        leads_col.update_one(
-            {"telegram_id": user.id},
-            {
-                "$setOnInsert": {
-                    "telegram_id": user.id,
-                    "first_name": user.first_name,
-                    "started_at": datetime.utcnow(),
-                    "converted": False,
-                    "followup_sent": False
-                }
-            },
-            upsert=True
-        )
+        # Wrap in try/except so a database hang DOES NOT stop the bot from replying
+        try:
+            leads_col.update_one(
+                {"telegram_id": user.id},
+                {
+                    "$setOnInsert": {
+                        "telegram_id": user.id,
+                        "first_name": user.first_name,
+                        "started_at": datetime.utcnow(),
+                        "converted": False,
+                        "followup_sent": False
+                    }
+                },
+                upsert=True
+            )
+        except Exception as e:
+            print(f"Lead Logging Error: {e}")
 
+    # The bot will instantly send this regardless of DB status
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("👑 Launch VIP Terminal App", web_app=WebAppInfo(url=MINI_APP_URL))]
     ])
@@ -77,65 +82,72 @@ async def check_expirations_and_leads():
     
     # 1. Prospective Lead Follow-up Reminder (48 Hours After /start)
     lead_cutoff = now - timedelta(hours=48)
-    unconverted_leads = leads_col.find({
-        "converted": False,
-        "followup_sent": False,
-        "started_at": {"$lte": lead_cutoff}
-    })
-    
-    for lead in unconverted_leads:
-        try:
-            kb = InlineKeyboardMarkup([
-                [InlineKeyboardButton("👑 Enter VIP Terminal", web_app=WebAppInfo(url=MINI_APP_URL))]
-            ])
-            await bot.send_message(
-                chat_id=lead["telegram_id"],
-                text=(
-                    "👑 <b>Jay Empire VIP Market Alert</b>\n\n"
-                    "High-precision trade setups and institutional insights are active right now. "
-                    "Don't miss the next execution wave.\n\n"
-                    "Tap below to launch your VIP Terminal and lock in your membership:"
-                ),
-                parse_mode="HTML",
-                reply_markup=kb
-            )
-            leads_col.update_one({"_id": lead["_id"]}, {"$set": {"followup_sent": True}})
-        except Exception as e:
-            print(f"Lead Follow-up Error ({lead['telegram_id']}): {e}")
+    try:
+        unconverted_leads = leads_col.find({
+            "converted": False,
+            "followup_sent": False,
+            "started_at": {"$lte": lead_cutoff}
+        })
+        for lead in unconverted_leads:
+            try:
+                kb = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("👑 Enter VIP Terminal", web_app=WebAppInfo(url=MINI_APP_URL))]
+                ])
+                await bot.send_message(
+                    chat_id=lead["telegram_id"],
+                    text=(
+                        "👑 <b>Jay Empire VIP Market Alert</b>\n\n"
+                        "High-precision trade setups and institutional insights are active right now. "
+                        "Don't miss the next execution wave.\n\n"
+                        "Tap below to launch your VIP Terminal and lock in your membership:"
+                    ),
+                    parse_mode="HTML",
+                    reply_markup=kb
+                )
+                leads_col.update_one({"_id": lead["_id"]}, {"$set": {"followup_sent": True}})
+            except Exception as e:
+                print(f"Lead Follow-up Error ({lead['telegram_id']}): {e}")
+    except Exception as e:
+        print(f"DB Error checking leads: {e}")
 
     # 2. VIP 3-Day Renewal Reminder
     reminder_target = now + timedelta(days=3)
-    expiring_soon = users_col.find({
-        "is_active": True,
-        "reminder_sent": False,
-        "expires_at": {"$lte": reminder_target}
-    })
-    
-    for user in expiring_soon:
-        try:
-            await bot.send_message(
-                chat_id=user["telegram_id"],
-                text=f"👑 <b>Jay Empire VIP Alert:</b>\nYour access to <b>{user['channel_type'].upper()} VIP</b> expires in 3 days. Launch the VIP Terminal to extend your access.",
-                parse_mode="HTML"
-            )
-            users_col.update_one({"_id": user["_id"]}, {"$set": {"reminder_sent": True}})
-        except Exception as e:
-            print(f"Renewal Reminder Error ({user['telegram_id']}): {e}")
+    try:
+        expiring_soon = users_col.find({
+            "is_active": True,
+            "reminder_sent": False,
+            "expires_at": {"$lte": reminder_target}
+        })
+        for user in expiring_soon:
+            try:
+                await bot.send_message(
+                    chat_id=user["telegram_id"],
+                    text=f"👑 <b>Jay Empire VIP Alert:</b>\nYour access to <b>{user['channel_type'].upper()} VIP</b> expires in 3 days. Launch the VIP Terminal to extend your access.",
+                    parse_mode="HTML"
+                )
+                users_col.update_one({"_id": user["_id"]}, {"$set": {"reminder_sent": True}})
+            except Exception as e:
+                print(f"Renewal Reminder Error ({user['telegram_id']}): {e}")
+    except Exception as e:
+        print(f"DB Error checking renewals: {e}")
 
     # 3. Deactivate Expired VIP Subscriptions
-    expired_users = users_col.find({
-        "is_active": True,
-        "expires_at": {"$lte": now}
-    })
-    for user in expired_users:
-        users_col.update_one({"_id": user["_id"]}, {"$set": {"is_active": False}})
-        try:
-            await bot.send_message(
-                chat_id=user["telegram_id"],
-                text="⚠️ <b>Jay Empire VIP Notice:</b> Your VIP access period has ended. Please renew inside the VIP Terminal."
-            )
-        except Exception as e:
-            print(f"Deactivation Error ({user['telegram_id']}): {e}")
+    try:
+        expired_users = users_col.find({
+            "is_active": True,
+            "expires_at": {"$lte": now}
+        })
+        for user in expired_users:
+            users_col.update_one({"_id": user["_id"]}, {"$set": {"is_active": False}})
+            try:
+                await bot.send_message(
+                    chat_id=user["telegram_id"],
+                    text="⚠️ <b>Jay Empire VIP Notice:</b> Your VIP access period has ended. Please renew inside the VIP Terminal."
+                )
+            except Exception as e:
+                print(f"Deactivation Error ({user['telegram_id']}): {e}")
+    except Exception as e:
+        print(f"DB Error checking expirations: {e}")
 
 async def scheduler_loop():
     while True:
@@ -147,17 +159,15 @@ async def scheduler_loop():
 # ==============================================================================
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Initialize application
     await telegram_app.initialize()
     await telegram_app.start()
     
-    # Configure Webhook automatically on startup
+    # Configure Webhook automatically on startup (Removed drop_pending_updates)
     webhook_target = f"{RENDER_URL.rstrip('/')}/telegram-webhook"
     bot = Bot(token=BOT_TOKEN)
-    await bot.set_webhook(url=webhook_target, drop_pending_updates=True)
+    await bot.set_webhook(url=webhook_target)
     print(f"Telegram Webhook configured to: {webhook_target}")
     
-    # Start automated background tasks
     asyncio.create_task(scheduler_loop())
     
     yield
@@ -201,30 +211,30 @@ async def paystack_webhook(request: Request):
             now = datetime.utcnow()
             expires_at = now + timedelta(days=days)
             
-            # Save or update record in MongoDB
-            users_col.update_one(
-                {"telegram_id": tg_id, "channel_type": channel_type},
-                {
-                    "$set": {
-                        "telegram_id": tg_id,
-                        "channel_type": channel_type,
-                        "purchased_at": now,
-                        "expires_at": expires_at,
-                        "is_active": True,
-                        "reminder_sent": False,
-                        "last_reference": data.get("reference")
-                    }
-                },
-                upsert=True
-            )
+            try:
+                users_col.update_one(
+                    {"telegram_id": tg_id, "channel_type": channel_type},
+                    {
+                        "$set": {
+                            "telegram_id": tg_id,
+                            "channel_type": channel_type,
+                            "purchased_at": now,
+                            "expires_at": expires_at,
+                            "is_active": True,
+                            "reminder_sent": False,
+                            "last_reference": data.get("reference")
+                        }
+                    },
+                    upsert=True
+                )
+                
+                leads_col.update_one(
+                    {"telegram_id": tg_id},
+                    {"$set": {"converted": True}}
+                )
+            except Exception as e:
+                print(f"Database update failed on webhook: {e}")
             
-            # Mark lead as converted to halt follow-ups
-            leads_col.update_one(
-                {"telegram_id": tg_id},
-                {"$set": {"converted": True}}
-            )
-            
-            # Deliver official single primary link via Telegram chat
             bot = Bot(token=BOT_TOKEN)
             try:
                 target_link = GOLD_PRIMARY_LINK if channel_type == "gold" else FOREX_PRIMARY_LINK
