@@ -7,62 +7,70 @@
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <script src="https://js.paystack.co/v1/inline.js"></script>
     
-    <!-- Importing Premium Fonts -->
+    <!-- Premium Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Montserrat:wght@500;700;800&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Montserrat:wght@600;700;800&display=swap" rel="stylesheet">
     
     <style>
         :root {
-            /* Executive Light Mode Palette */
-            --bg-main: #FFFFFF;
-            --bg-secondary: #F8F9FA;
-            --text-dark: #0A0A0A;
-            --text-muted: #6B7280;
-            --gold-primary: #D4AF37;
-            --gold-light: #F9F2DB;
+            /* Jay Empire Classic Premium Palette */
             --navy-deep: #0B132B;
-            --card-border: #E5E7EB;
-            --card-shadow: 0 12px 35px rgba(0, 0, 0, 0.05);
-            --card-shadow-hover: 0 15px 45px rgba(212, 175, 55, 0.15);
+            --navy-light: #1C2541;
+            --gold-primary: #D4AF37;
+            --gold-gradient: linear-gradient(135deg, #F9F2DB 0%, #D4AF37 100%);
+            --bg-light: #F8F9FA;
+            --white: #FFFFFF;
+            --text-dark: #1A1A1A;
+            --text-muted: #6B7280;
+            /* The deep, soft shadow from your reference image */
+            --floating-shadow: 0 20px 40px rgba(0, 0, 0, 0.12);
         }
 
         * {
             box-sizing: border-box;
             -webkit-tap-highlight-color: transparent;
+            margin: 0;
+            padding: 0;
         }
 
         body {
             font-family: 'Inter', sans-serif;
-            background-color: var(--bg-main);
+            background-color: var(--bg-light);
             color: var(--text-dark);
-            margin: 0;
-            padding: 16px;
             min-height: 100vh;
             overflow-x: hidden;
-            position: relative;
         }
 
-        h1, h2, h3, .card-heading, .brand-title {
+        h1, h2, h3, .card-title, .brand-title {
             font-family: 'Montserrat', sans-serif;
         }
 
-        /* SLEEK TICKER */
-        .ticker-wrap {
-            width: 100%;
+        /* HERO SECTION (The Dark Top Background) */
+        .hero-section {
             background: var(--navy-deep);
+            background-image: radial-gradient(circle at top right, var(--navy-light) 0%, transparent 60%);
+            padding: 30px 20px 90px 20px; /* Extra bottom padding for cards to overlap */
+            text-align: center;
+            border-bottom-left-radius: 40px;
+            border-bottom-right-radius: 40px;
+            position: relative;
+        }
+
+        .ticker-wrap {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(212, 175, 55, 0.2);
+            border-radius: 30px;
             overflow: hidden;
             white-space: nowrap;
-            padding: 12px 0;
+            padding: 8px 0;
             margin-bottom: 24px;
-            border-radius: 8px;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
         }
 
         .ticker-move {
             display: inline-block;
             animation: ticker 25s linear infinite;
-            font-size: 12px;
+            font-size: 11px;
             font-weight: 600;
             color: var(--gold-primary);
             letter-spacing: 1px;
@@ -74,69 +82,37 @@
             100% { transform: translate3d(-50%, 0, 0); }
         }
 
-        /* BRAND HEADER */
         .brand-header {
-            text-align: center;
-            margin-bottom: 24px;
-        }
-
-        .emblem-badge {
-            width: 60px;
-            height: 60px;
-            margin: 0 auto 12px auto;
-            border-radius: 50%;
-            background: var(--navy-deep);
-            border: 2px solid var(--gold-primary);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 24px;
-            box-shadow: 0 8px 20px rgba(11, 19, 43, 0.15);
+            color: var(--white);
         }
 
         .brand-title {
-            font-size: 22px;
+            font-size: 26px;
             font-weight: 800;
-            color: var(--text-dark);
-            margin: 0;
+            margin-bottom: 6px;
             letter-spacing: -0.5px;
-            text-transform: uppercase;
         }
 
         .brand-sub {
-            font-size: 11px;
-            color: var(--text-muted);
-            text-transform: uppercase;
-            letter-spacing: 1.5px;
-            margin-top: 6px;
-            font-weight: 500;
+            font-size: 13px;
+            color: #A0AABF;
+            font-weight: 400;
+            max-width: 280px;
+            margin: 0 auto;
+            line-height: 1.5;
         }
 
-        /* MINIMALIST PROGRESS TRACKER */
-        .tracker {
-            display: flex;
-            justify-content: space-between;
-            margin-bottom: 28px;
-            gap: 8px;
-        }
-
-        .tracker-dot {
-            flex: 1;
-            height: 4px;
-            background: #E5E7EB;
-            border-radius: 4px;
-            transition: all 0.4s ease;
-        }
-
-        .tracker-dot.active {
-            background: var(--navy-deep);
+        /* MAIN CONTENT AREA */
+        .content-wrapper {
+            padding: 0 20px 40px 20px;
+            margin-top: -60px; /* Pulls the cards up to overlap the dark background */
         }
 
         /* PANELS */
         .panel {
             display: none;
             opacity: 0;
-            transform: translateY(10px);
+            transform: translateY(15px);
             transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
         }
 
@@ -146,315 +122,251 @@
             transform: translateY(0);
         }
 
-        /* INFORMATION ALERT BOX */
-        .vision-card {
-            background: var(--bg-secondary);
-            border-left: 4px solid var(--gold-primary);
-            border-radius: 8px;
-            padding: 18px;
-            font-size: 13px;
-            line-height: 1.6;
-            color: var(--text-dark);
-            margin-bottom: 24px;
-        }
-
-        .vision-card strong {
-            font-family: 'Montserrat', sans-serif;
-            color: var(--navy-deep);
-            font-size: 14px;
-        }
-
-        /* EXECUTIVE FLOATING CARDS */
-        .executive-card {
-            background: #FFFFFF;
-            border: 1px solid var(--card-border);
-            border-radius: 12px;
-            padding: 20px;
-            margin-bottom: 16px;
+        /* THE FLOATING CARDS (Matching Reference #2) */
+        .floating-card {
+            background: var(--white);
+            border-radius: 24px;
+            padding: 32px 24px 45px 24px; /* Big bottom padding for the hanging button */
+            margin-bottom: 40px; /* Space between cards */
+            text-align: center;
+            box-shadow: var(--floating-shadow);
+            position: relative;
             display: flex;
+            flex-direction: column;
             align-items: center;
-            justify-content: space-between;
-            cursor: pointer;
-            transition: all 0.3s ease;
-            box-shadow: var(--card-shadow);
         }
 
-        .executive-card:active {
-            transform: scale(0.98);
-            border-color: var(--gold-primary);
-            box-shadow: var(--card-shadow-hover);
-        }
-
-        .card-heading {
-            font-size: 15px;
+        .card-pill-header {
+            background: var(--navy-deep);
+            color: var(--white);
+            font-size: 10px;
             font-weight: 700;
-            color: var(--text-dark);
-            margin-bottom: 4px;
+            text-transform: uppercase;
+            letter-spacing: 1.5px;
+            padding: 8px 20px;
+            border-radius: 30px;
+            margin-bottom: 16px;
+            box-shadow: 0 4px 10px rgba(11, 19, 43, 0.2);
+        }
+
+        .card-icon {
+            font-size: 32px;
+            margin-bottom: 12px;
+        }
+
+        .card-title {
+            font-size: 20px;
+            color: var(--navy-deep);
+            margin-bottom: 8px;
         }
 
         .card-desc {
+            font-size: 13px;
+            color: var(--text-muted);
+            line-height: 1.5;
+            margin-bottom: 10px;
+        }
+
+        /* THE "DROP DOWN" HANGING BUTTON */
+        .card-action-btn {
+            position: absolute;
+            bottom: -22px; /* Pulls the button halfway out of the card */
+            background: var(--gold-primary);
+            color: var(--navy-deep);
+            border: none;
+            font-family: 'Montserrat', sans-serif;
+            font-size: 14px;
+            font-weight: 800;
+            padding: 14px 40px;
+            border-radius: 30px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            cursor: pointer;
+            box-shadow: 0 10px 20px rgba(212, 175, 55, 0.3);
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+
+        .card-action-btn:active {
+            transform: scale(0.95);
+            box-shadow: 0 5px 10px rgba(212, 175, 55, 0.2);
+        }
+
+        /* SECONDARY CARD STYLE (For Services & Back Buttons) */
+        .outline-card {
+            background: transparent;
+            border: 2px dashed #CBD5E1;
+            border-radius: 20px;
+            padding: 24px;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+
+        .outline-btn {
+            background: var(--white);
+            color: var(--navy-deep);
+            border: 2px solid var(--navy-deep);
+            font-family: 'Montserrat', sans-serif;
+            font-size: 13px;
+            font-weight: 700;
+            padding: 12px 30px;
+            border-radius: 30px;
+            margin-top: 16px;
+            cursor: pointer;
+            text-transform: uppercase;
+        }
+
+        /* PRICING SPECIFIC DISPLAY */
+        .price-display {
+            font-family: 'Montserrat', sans-serif;
+            font-size: 32px;
+            font-weight: 800;
+            color: var(--text-dark);
+            margin: 10px 0;
+        }
+
+        .price-sub {
             font-size: 12px;
             color: var(--text-muted);
-            line-height: 1.4;
-        }
-
-        /* PREMIUM BADGES */
-        .status-badge {
-            background: var(--gold-light);
-            color: var(--navy-deep);
-            border: 1px solid var(--gold-primary);
-            padding: 6px 14px;
-            border-radius: 20px;
-            font-size: 11px;
-            font-weight: 700;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }
-
-        .status-badge-blue {
-            background: var(--bg-secondary);
-            color: var(--navy-deep);
-            border: 1px solid var(--card-border);
-            padding: 6px 14px;
-            border-radius: 20px;
-            font-size: 11px;
-            font-weight: 700;
-            text-transform: uppercase;
-        }
-
-        /* BUTTONS */
-        .btn-premium {
-            background: var(--navy-deep);
-            color: #FFFFFF;
-            border: 2px solid var(--navy-deep);
-            width: 100%;
-            padding: 16px;
-            border-radius: 8px;
-            font-size: 14px;
-            font-family: 'Montserrat', sans-serif;
-            font-weight: 700;
-            cursor: pointer;
-            transition: all 0.3s ease;
-            margin-top: 10px;
             text-transform: uppercase;
             letter-spacing: 1px;
         }
 
-        .btn-premium:active {
-            background: var(--gold-primary);
-            border-color: var(--gold-primary);
-            color: var(--navy-deep);
-        }
-
-        .btn-ghost {
-            background: transparent;
-            color: var(--text-muted);
-            border: 1px solid var(--card-border);
-            width: 100%;
-            padding: 14px;
-            border-radius: 8px;
-            font-size: 13px;
-            font-weight: 500;
-            margin-top: 12px;
-            cursor: pointer;
-            transition: all 0.2s ease;
-        }
-
-        /* SUCCESS DISPLAY */
-        .success-box {
-            text-align: center;
-            padding: 32px 24px;
-            background: #FFFFFF;
-            border: 1px solid var(--card-border);
-            border-top: 6px solid var(--gold-primary);
-            border-radius: 12px;
-            box-shadow: var(--card-shadow);
-        }
-
-        .success-btn {
+        /* BACK NAVIGATION */
+        .nav-back {
             display: block;
-            background: var(--gold-primary);
-            color: var(--navy-deep);
+            text-align: center;
+            color: var(--text-muted);
+            font-size: 14px;
+            font-weight: 500;
+            margin: 20px auto 40px auto;
             text-decoration: none;
-            padding: 16px;
-            border-radius: 8px;
-            font-family: 'Montserrat', sans-serif;
-            font-weight: 800;
-            font-size: 15px;
-            margin-top: 24px;
-            text-transform: uppercase;
-            box-shadow: 0 4px 15px rgba(212, 175, 55, 0.3);
+        }
+
+        /* BACKGROUND ACCENT LINES */
+        .bg-lines {
+            position: fixed;
+            top: 50%;
+            left: -50px;
+            width: 150px;
+            height: 20px;
+            border: 3px solid rgba(212, 175, 55, 0.1);
+            border-radius: 20px;
+            z-index: -1;
+            transform: rotate(-15deg);
+        }
+        .bg-lines.right {
+            left: auto;
+            right: -50px;
+            top: 70%;
         }
     </style>
 </head>
 <body>
 
-    <!-- TICKER -->
-    <div class="ticker-wrap">
-        <div class="ticker-move">
-            🥇 XAUUSD: BUY @ 2420.50 🚀 | 📈 EURUSD: BULLISH | 👑 JAY EMPIRE VIP: 94.2% WIN RATE | 📊 GBPUSD: TARGET HIT | 🪙 GOLD MASTER VIP ACTIVE
+    <!-- Minimalist Background Accents -->
+    <div class="bg-lines"></div>
+    <div class="bg-lines right"></div>
+
+    <!-- THE DARK HERO SECTION -->
+    <div class="hero-section" id="hero-header">
+        <div class="ticker-wrap">
+            <div class="ticker-move">
+                🥇 XAUUSD: BUY @ 2420.50 🚀 | 📈 EURUSD: BULLISH | 👑 JAY EMPIRE VIP: 94.2% WIN RATE
+            </div>
+        </div>
+        <div class="brand-header">
+            <h1 class="brand-title">JAY EMPIRE</h1>
+            <p class="brand-sub" id="header-subtitle">Select your plan for precision trading and institutional insights.</p>
         </div>
     </div>
 
-    <!-- HEADER -->
-    <div class="brand-header">
-        <div class="emblem-badge">👑</div>
-        <div class="brand-title">JAY EMPIRE VIP</div>
-        <div class="brand-sub" id="sub-header">Institutional Access Terminal</div>
-    </div>
-
-    <!-- TRACKER -->
-    <div class="tracker" id="tracker-bar">
-        <div class="tracker-dot active" id="t1"></div>
-        <div class="tracker-dot" id="t2"></div>
-        <div class="tracker-dot" id="t3"></div>
-        <div class="tracker-dot" id="t4"></div>
-    </div>
-
-    <!-- STEP 1: HOMEPAGE -->
-    <div id="step-1" class="panel active">
-        <div class="vision-card">
-            <strong>👑 WELCOME TO JAY EMPIRE</strong><br>
-            Precision trading execution and institutional insights. Select your VIP destination or request specialized digital agency services below.
-        </div>
-
-        <div class="executive-card" onclick="chooseDestination('gold', 'JAY GOLD MASTER VIP')">
-            <div>
-                <div class="card-heading">🪙 JAY GOLD MASTER VIP</div>
-                <div class="card-desc">Gold (XAUUSD) Signals & Analysis</div>
-            </div>
-            <div class="status-badge">SELECT</div>
-        </div>
-
-        <div class="executive-card" onclick="chooseDestination('fx', 'JAY FX PREMIUM SIGNALS')">
-            <div>
-                <div class="card-heading">📈 JAY FX PREMIUM SIGNALS</div>
-                <div class="card-desc">Forex Currency Pairs & Indices</div>
-            </div>
-            <div class="status-badge">SELECT</div>
-        </div>
-
-        <div class="executive-card" style="margin-top: 24px; border-style: dashed;" onclick="switchStep('services')">
-            <div>
-                <div class="card-heading">💼 SPECIAL SERVICES</div>
-                <div class="card-desc">Video Ads, Branding, Funnels</div>
-            </div>
-            <div class="status-badge-blue">EXPLORE</div>
-        </div>
-    </div>
-
-    <!-- SUB-MENU: SPECIAL SERVICES -->
-    <div id="step-services" class="panel">
-        <div class="vision-card">
-            <strong>💼 JAY EMPIRE DIGITAL SERVICES</strong><br>
-            Tap any service to connect directly with Jay Empire on Telegram.
-        </div>
-
-        <div class="executive-card" onclick="openDirectService('High-End Video Ads & Editing')">
-            <div>
-                <div class="card-heading">🎬 High-End Video Ads</div>
-                <div class="card-desc">TikTok/Reels Ads & Cinema Retouching</div>
-            </div>
-            <div class="status-badge-blue">CONNECT</div>
-        </div>
-
-        <div class="executive-card" onclick="openDirectService('Graphic & Logo Design')">
-            <div>
-                <div class="card-heading">🎨 Brand Design & Flyers</div>
-                <div class="card-desc">Logos, Mockups & Brand Assets</div>
-            </div>
-            <div class="status-badge-blue">CONNECT</div>
-        </div>
-
-        <div class="executive-card" onclick="openDirectService('Brand Consultancy & Funnels')">
-            <div>
-                <div class="card-heading">🚀 Brand Consultancy</div>
-                <div class="card-desc">Growth Strategy & Automation</div>
-            </div>
-            <div class="status-badge-blue">CONNECT</div>
-        </div>
-
-        <div class="executive-card" onclick="openDirectService('Bulk SMS & Data Reselling Hub')">
-            <div>
-                <div class="card-heading">📲 Bulk SMS & VTU Hub</div>
-                <div class="card-desc">SMS Marketing & Data Reselling</div>
-            </div>
-            <div class="status-badge-blue">CONNECT</div>
-        </div>
-
-        <button class="btn-ghost" onclick="switchStep(1)">⬅️ Back to Main Menu</button>
-    </div>
-
-    <!-- STEP 2: TERMS & CONDITIONS -->
-    <div id="step-2" class="panel">
-        <div class="vision-card">
-            <strong>⚠️ TERMS OF MEMBERSHIP</strong><br><br>
-            1. <strong>Risk Protocol:</strong> Financial trading carries capital risk.<br>
-            2. <strong>Instant Access:</strong> Paystack issues your encrypted single-use access link immediately on-screen.<br>
-            3. <strong>Executive Support:</strong> If you face any issues, contact support directly at <strong>@jay_empire247</strong> on Telegram.
-        </div>
-        <button class="btn-premium" onclick="switchStep(3)">Agree & Proceed</button>
-        <button class="btn-ghost" onclick="switchStep(1)">⬅️ Back</button>
-    </div>
-
-    <!-- STEP 3: REGIONAL CURRENCY -->
-    <div id="step-3" class="panel">
-        <div class="vision-card">
-            <strong>🌍 SELECT YOUR REGION</strong><br>
-            Choose your local currency for seamless checkout via Paystack.
-        </div>
-
-        <div class="executive-card" onclick="chooseCurrency('GHS', 15.50, 'GHS ')">
-            <div>
-                <div class="card-heading">🇬🇭 Ghana Market</div>
-                <div class="card-desc">MTN MoMo, Telecel Cash & Cards</div>
-            </div>
-            <div class="status-badge">GHS</div>
-        </div>
-
-        <div class="executive-card" onclick="chooseCurrency('NGN', 1600.0, '₦')">
-            <div>
-                <div class="card-heading">🇳🇬 Nigeria Market</div>
-                <div class="card-desc">Bank Transfers, USSD & Cards</div>
-            </div>
-            <div class="status-badge">NGN</div>
-        </div>
-
-        <div class="executive-card" onclick="chooseCurrency('KES', 130.0, 'KSh ')">
-            <div>
-                <div class="card-heading">🇰🇪 Kenya Market</div>
-                <div class="card-desc">M-Pesa & Cards</div>
-            </div>
-            <div class="status-badge">KES</div>
-        </div>
-
-        <div class="executive-card" onclick="chooseCurrency('USD', 1.0, '$')">
-            <div>
-                <div class="card-heading">🌍 International</div>
-                <div class="card-desc">Global Credit / Debit Cards</div>
-            </div>
-            <div class="status-badge">USD</div>
-        </div>
-
-        <button class="btn-ghost" onclick="switchStep(2)">⬅️ Back</button>
-    </div>
-
-    <!-- STEP 4: DURATION PLANS -->
-    <div id="step-4" class="panel">
-        <div id="plans-wrapper"></div>
-        <button class="btn-ghost" onclick="switchStep(3)">⬅️ Back</button>
-    </div>
-
-    <!-- SUCCESS SCREEN -->
-    <div id="step-success" class="panel">
-        <div class="success-box">
-            <div style="font-size: 48px; margin-bottom: 12px;">✅</div>
-            <h2 style="color: var(--navy-deep); margin: 0 0 8px 0; font-size: 22px;">PAYMENT VERIFIED</h2>
-            <p style="font-size: 14px; color: var(--text-muted); margin: 0; line-height: 1.5;">Your transaction was successful. Your secure VIP Access Link is now active.</p>
+    <!-- FLOATING CONTENT AREA -->
+    <div class="content-wrapper">
+        
+        <!-- STEP 1: HOMEPAGE -->
+        <div id="step-1" class="panel active">
             
-            <a id="vip-join-btn" href="#" target="_blank" class="success-btn">ENTER VIP CHANNEL</a>
-            <p style="font-size: 12px; color: var(--text-muted); margin-top: 20px;">Need help? Contact <strong>@jay_empire247</strong></p>
+            <div class="floating-card">
+                <div class="card-pill-header">COMMODITIES</div>
+                <div class="card-icon">🪙</div>
+                <h2 class="card-title">Gold Master VIP</h2>
+                <p class="card-desc">Exclusive XAUUSD signals, high-probability setups, and technical analysis.</p>
+                <button class="card-action-btn" onclick="chooseDestination('gold', 'Gold Master VIP')">SELECT PLAN</button>
+            </div>
+
+            <div class="floating-card">
+                <div class="card-pill-header">FOREX & INDICES</div>
+                <div class="card-icon">📈</div>
+                <h2 class="card-title">FX Premium Signals</h2>
+                <p class="card-desc">Curated execution on major currency pairs and global market indices.</p>
+                <button class="card-action-btn" style="background: var(--navy-deep); color: var(--white);" onclick="chooseDestination('fx', 'FX Premium Signals')">SELECT PLAN</button>
+            </div>
+
+            <div class="outline-card">
+                <h3 style="color: var(--navy-deep); margin-bottom: 6px; font-size: 16px;">💼 Special Services</h3>
+                <p style="font-size: 12px; color: var(--text-muted);">Video Ads, Branding, Funnels & Data</p>
+                <button class="outline-btn" onclick="switchStep('services')">EXPLORE SERVICES</button>
+            </div>
         </div>
+
+        <!-- STEP SERVICES -->
+        <div id="step-services" class="panel">
+            <div class="floating-card">
+                <div class="card-pill-header">DIGITAL AGENCY</div>
+                <div class="card-icon">🎬</div>
+                <h2 class="card-title">High-End Video Ads</h2>
+                <p class="card-desc">TikTok/Reels Ads & Cinema Retouching</p>
+                <button class="card-action-btn" onclick="openDirectService('High-End Video Ads')">CONNECT NOW</button>
+            </div>
+
+            <div class="floating-card">
+                <div class="card-pill-header">DESIGN</div>
+                <div class="card-icon">🎨</div>
+                <h2 class="card-title">Brand Assets</h2>
+                <p class="card-desc">Executive Logos, Mockups & Flyers</p>
+                <button class="card-action-btn" onclick="openDirectService('Graphic Design')">CONNECT NOW</button>
+            </div>
+
+            <div class="nav-back" onclick="switchStep(1)">⬅️ Back to Main Menu</div>
+        </div>
+
+        <!-- STEP 2: REGIONAL CURRENCY -->
+        <div id="step-2" class="panel">
+            
+            <div class="floating-card" style="padding-bottom: 30px;">
+                <div class="card-pill-header">STEP 1 OF 2</div>
+                <h2 class="card-title">Select Region</h2>
+                <p class="card-desc">Choose your local currency for seamless payment processing.</p>
+                
+                <div style="width: 100%; margin-top: 20px;">
+                    <button class="outline-btn" style="width: 100%; margin-bottom: 10px;" onclick="chooseCurrency('GHS', 15.50, 'GHS ')">🇬🇭 Ghana (MoMo/Card)</button>
+                    <button class="outline-btn" style="width: 100%; margin-bottom: 10px;" onclick="chooseCurrency('NGN', 1600.0, '₦')">🇳🇬 Nigeria (Transfer/Card)</button>
+                    <button class="outline-btn" style="width: 100%; margin-bottom: 10px;" onclick="chooseCurrency('USD', 1.0, '$')">🌍 International (USD)</button>
+                </div>
+            </div>
+
+            <div class="nav-back" onclick="switchStep(1)">⬅️ Cancel</div>
+        </div>
+
+        <!-- STEP 3: DURATION PLANS (Generated by JS) -->
+        <div id="step-3" class="panel">
+            <div id="plans-wrapper"></div>
+            <div class="nav-back" onclick="switchStep(2)">⬅️ Back to Regions</div>
+        </div>
+
+        <!-- SUCCESS SCREEN -->
+        <div id="step-success" class="panel">
+            <div class="floating-card">
+                <div class="card-pill-header" style="background: #10B981;">VERIFIED</div>
+                <div class="card-icon">👑</div>
+                <h2 class="card-title">Access Granted</h2>
+                <p class="card-desc">Your payment was successful. Tap below to enter the VIP Terminal immediately.</p>
+                <a id="vip-join-btn" href="#" target="_blank" style="text-decoration: none;">
+                    <button class="card-action-btn">ENTER VIP CHANNEL</button>
+                </a>
+            </div>
+        </div>
+
     </div>
 
     <script>
@@ -462,9 +374,8 @@
         tg.expand();
         tg.ready();
 
-        // Standardize Telegram WebApp UI Colors if available
         if (tg.setHeaderColor) {
-            tg.setHeaderColor('#FFFFFF'); 
+            tg.setHeaderColor('#0B132B'); // Matches the dark hero background
         }
 
         let targetChannel = '';
@@ -473,47 +384,36 @@
         let conversionRate = 15.50;
         let currencySymbol = 'GHS ';
 
-        // YOUR CHANNEL DIRECT INVITE LINKS
         const GOLD_LINK = "https://t.me/+env-Zrui2ykwYjg8"; 
         const FOREX_LINK = "https://t.me/+njii3OAHlqI3MjQ8"; 
 
         const plans = [
-            { key: '1_day_test', name: '🧪 1-Day VIP Pass', usd: 0.01, days: 1, isTest: true },
+            { key: '1_day_test', name: '1-Day Pass', usd: 0.01, days: 1, isTest: true },
             { key: '1_month', name: '1 Month Access', usd: 15, days: 30, isTest: false },
-            { key: '6_months', name: '6 Months Access', usd: 45, days: 180, isTest: false },
-            { key: '1_year', name: '1 Year Access', usd: 100, days: 365, isTest: false },
-            { key: 'lifetime', name: 'Lifetime VIP Pass', usd: 250, days: 36500, isTest: false }
+            { key: 'lifetime', name: 'Lifetime VIP', usd: 250, days: 36500, isTest: false }
         ];
-
-        function setTracker(step) {
-            for (let i = 1; i <= 4; i++) {
-                const el = document.getElementById(`t${i}`);
-                if (!el) continue;
-                if (typeof step === 'number' && i <= step) el.classList.add('active');
-                else el.classList.remove('active');
-            }
-        }
 
         function switchStep(stepVal) {
             document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
-            if (typeof stepVal === 'number') {
-                document.getElementById(`step-${stepVal}`).classList.add('active');
-                setTracker(stepVal);
-            } else {
-                document.getElementById(`step-${stepVal}`).classList.add('active');
-            }
+            document.getElementById(`step-${stepVal}`).classList.add('active');
+            
+            // Adjust header text based on step
+            const subTitle = document.getElementById('header-subtitle');
+            if(stepVal === 1) subTitle.innerText = "Select your plan for precision trading and institutional insights.";
+            if(stepVal === 2) subTitle.innerText = "Choose your preferred payment currency.";
+            if(stepVal === 3) subTitle.innerText = `Select a duration for ${targetChannelTitle}.`;
+            
             window.scrollTo(0, 0);
         }
 
         function chooseDestination(key, title) {
             targetChannel = key;
             targetChannelTitle = title;
-            document.getElementById('sub-header').innerText = title;
             switchStep(2);
         }
 
         function openDirectService(serviceName) {
-            const msg = encodeURIComponent(`Hello Jay Empire, I am inquiring about: ${serviceName}`);
+            const msg = encodeURIComponent(`Hello Jay Empire, I need info about: ${serviceName}`);
             window.location.href = `https://t.me/jay_empire247?text=${msg}`;
         }
 
@@ -522,7 +422,7 @@
             conversionRate = rate;
             currencySymbol = symbol;
             buildPlansUI();
-            switchStep(4);
+            switchStep(3);
         }
 
         function buildPlansUI() {
@@ -534,24 +434,21 @@
                 let amountInSubunits = 0;
 
                 if (plan.isTest) {
-                    priceText = '0.10 GHS';
+                    priceText = '0.10';
                     amountInSubunits = 10;
                 } else {
                     const total = plan.usd * conversionRate;
-                    priceText = `${currencySymbol}${total.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+                    priceText = total.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2});
                     amountInSubunits = Math.round(total * 100);
                 }
 
-                // Injecting new executive card style
                 const card = document.createElement('div');
-                card.className = 'executive-card';
-                card.onclick = () => triggerPaystack(amountInSubunits, plan.days);
+                card.className = 'floating-card';
                 card.innerHTML = `
-                    <div>
-                        <div class="card-heading">${plan.name}</div>
-                        <div class="card-desc">Payable: <strong>${priceText}</strong></div>
-                    </div>
-                    <div class="status-badge">PAY</div>
+                    <div class="card-pill-header">${plan.name}</div>
+                    <div class="price-display">${currencySymbol}${priceText}</div>
+                    <div class="price-sub">Total Payable</div>
+                    <button class="card-action-btn" onclick="triggerPaystack(${amountInSubunits}, ${plan.days})">PAY NOW</button>
                 `;
                 wrapper.appendChild(card);
             });
@@ -566,23 +463,13 @@
                 email: userEmail,
                 amount: amountSubunits,
                 currency: activeCurrency === 'GHS' || amountSubunits === 10 ? 'GHS' : activeCurrency,
-                metadata: {
-                    telegram_id: user ? user.id : 0,
-                    channel_type: targetChannel,
-                    days: days
-                },
+                metadata: { telegram_id: user ? user.id : 0, channel_type: targetChannel, days: days },
                 callback: function(response) {
-                    document.getElementById('tracker-bar').style.display = 'none';
                     const activeLink = targetChannel === 'gold' ? GOLD_LINK : FOREX_LINK;
-                    
-                    const joinBtn = document.getElementById('vip-join-btn');
-                    joinBtn.href = activeLink;
-                    
+                    document.getElementById('vip-join-btn').href = activeLink;
                     switchStep('success');
                 },
-                onClose: function() {
-                    alert('Checkout cancelled.');
-                }
+                onClose: function() { }
             });
             handler.openIframe();
         }
