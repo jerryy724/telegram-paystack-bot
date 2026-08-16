@@ -6,16 +6,25 @@
     <title>Jay Empire VIP Terminal</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <script src="https://js.paystack.co/v1/inline.js"></script>
+    
+    <!-- Importing Premium Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Montserrat:wght@500;700;800&display=swap" rel="stylesheet">
+    
     <style>
         :root {
-            --bg-dark: #030712;
-            --blue-glow: #2563eb;
-            --gold-primary: #fbbf24;
-            --gold-glow: rgba(251, 191, 36, 0.4);
-            --card-bg: rgba(15, 23, 42, 0.75);
-            --card-border: rgba(251, 191, 36, 0.25);
-            --text-main: #ffffff;
-            --text-muted: #94a3b8;
+            /* Executive Light Mode Palette */
+            --bg-main: #FFFFFF;
+            --bg-secondary: #F8F9FA;
+            --text-dark: #0A0A0A;
+            --text-muted: #6B7280;
+            --gold-primary: #D4AF37;
+            --gold-light: #F9F2DB;
+            --navy-deep: #0B132B;
+            --card-border: #E5E7EB;
+            --card-shadow: 0 12px 35px rgba(0, 0, 0, 0.05);
+            --card-shadow-hover: 0 15px 45px rgba(212, 175, 55, 0.15);
         }
 
         * {
@@ -24,9 +33,9 @@
         }
 
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background-color: var(--bg-dark);
-            color: var(--text-main);
+            font-family: 'Inter', sans-serif;
+            background-color: var(--bg-main);
+            color: var(--text-dark);
             margin: 0;
             padding: 16px;
             min-height: 100vh;
@@ -34,54 +43,30 @@
             position: relative;
         }
 
-        /* BACKGROUND MOTION ORBS */
-        .ambient-bg {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100vw;
-            height: 100vh;
-            z-index: -1;
-            overflow: hidden;
-            pointer-events: none;
+        h1, h2, h3, .card-heading, .brand-title {
+            font-family: 'Montserrat', sans-serif;
         }
 
-        .orb {
-            position: absolute;
-            border-radius: 50%;
-            filter: blur(80px);
-            opacity: 0.25;
-            animation: orbFloat 12s infinite alternate ease-in-out;
-        }
-
-        .orb-1 { width: 250px; height: 250px; background: var(--blue-glow); top: -10%; left: -10%; }
-        .orb-2 { width: 300px; height: 300px; background: #d97706; bottom: -10%; right: -10%; animation-delay: -6s; }
-
-        @keyframes orbFloat {
-            0% { transform: translate(0, 0) scale(1); }
-            100% { transform: translate(30px, 40px) scale(1.15); }
-        }
-
-        /* EXPANDED LIVE TICKER */
+        /* SLEEK TICKER */
         .ticker-wrap {
             width: 100%;
-            background: rgba(30, 58, 138, 0.35);
-            border: 1px solid rgba(59, 130, 246, 0.4);
+            background: var(--navy-deep);
             overflow: hidden;
             white-space: nowrap;
-            padding: 10px 0;
-            margin-bottom: 20px;
-            border-radius: 12px;
-            backdrop-filter: blur(8px);
+            padding: 12px 0;
+            margin-bottom: 24px;
+            border-radius: 8px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
         }
 
         .ticker-move {
             display: inline-block;
-            animation: ticker 20s linear infinite;
-            font-size: 13px;
-            font-weight: 700;
+            animation: ticker 25s linear infinite;
+            font-size: 12px;
+            font-weight: 600;
             color: var(--gold-primary);
-            letter-spacing: 0.5px;
+            letter-spacing: 1px;
+            text-transform: uppercase;
         }
 
         @keyframes ticker {
@@ -89,70 +74,70 @@
             100% { transform: translate3d(-50%, 0, 0); }
         }
 
-        /* HEADER */
+        /* BRAND HEADER */
         .brand-header {
             text-align: center;
-            margin-bottom: 20px;
+            margin-bottom: 24px;
         }
 
         .emblem-badge {
-            width: 68px;
-            height: 68px;
-            margin: 0 auto 10px auto;
+            width: 60px;
+            height: 60px;
+            margin: 0 auto 12px auto;
             border-radius: 50%;
-            background: radial-gradient(circle, rgba(251, 191, 36, 0.2) 0%, rgba(15, 23, 42, 0.9) 100%);
+            background: var(--navy-deep);
             border: 2px solid var(--gold-primary);
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 32px;
-            box-shadow: 0 0 20px var(--gold-glow);
+            font-size: 24px;
+            box-shadow: 0 8px 20px rgba(11, 19, 43, 0.15);
         }
 
         .brand-title {
             font-size: 22px;
-            font-weight: 900;
-            background: linear-gradient(135deg, #ffffff 30%, var(--gold-primary) 100%);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
+            font-weight: 800;
+            color: var(--text-dark);
             margin: 0;
-            letter-spacing: 1px;
+            letter-spacing: -0.5px;
+            text-transform: uppercase;
         }
 
         .brand-sub {
             font-size: 11px;
             color: var(--text-muted);
             text-transform: uppercase;
-            letter-spacing: 2px;
-            margin-top: 4px;
+            letter-spacing: 1.5px;
+            margin-top: 6px;
+            font-weight: 500;
         }
 
-        /* TRACKER */
+        /* MINIMALIST PROGRESS TRACKER */
         .tracker {
             display: flex;
             justify-content: space-between;
-            margin-bottom: 20px;
+            margin-bottom: 28px;
+            gap: 8px;
         }
 
         .tracker-dot {
-            width: 23%;
+            flex: 1;
             height: 4px;
-            background: rgba(255, 255, 255, 0.1);
-            border-radius: 2px;
+            background: #E5E7EB;
+            border-radius: 4px;
             transition: all 0.4s ease;
         }
 
         .tracker-dot.active {
-            background: linear-gradient(90deg, var(--blue-glow), var(--gold-primary));
-            box-shadow: 0 0 10px var(--gold-primary);
+            background: var(--navy-deep);
         }
 
         /* PANELS */
         .panel {
             display: none;
             opacity: 0;
-            transform: translateY(12px);
-            transition: all 0.35s ease;
+            transform: translateY(10px);
+            transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
         }
 
         .panel.active {
@@ -161,149 +146,164 @@
             transform: translateY(0);
         }
 
+        /* INFORMATION ALERT BOX */
         .vision-card {
-            background: linear-gradient(135deg, rgba(37, 99, 235, 0.2), rgba(251, 191, 36, 0.1));
-            border: 1px solid var(--card-border);
-            border-radius: 14px;
-            padding: 16px;
+            background: var(--bg-secondary);
+            border-left: 4px solid var(--gold-primary);
+            border-radius: 8px;
+            padding: 18px;
             font-size: 13px;
             line-height: 1.6;
-            color: #e2e8f0;
-            margin-bottom: 16px;
-            backdrop-filter: blur(12px);
+            color: var(--text-dark);
+            margin-bottom: 24px;
         }
 
         .vision-card strong {
-            color: var(--gold-primary);
+            font-family: 'Montserrat', sans-serif;
+            color: var(--navy-deep);
+            font-size: 14px;
         }
 
-        /* GLASS CARDS */
-        .glass-card {
-            background: var(--card-bg);
-            backdrop-filter: blur(16px);
+        /* EXECUTIVE FLOATING CARDS */
+        .executive-card {
+            background: #FFFFFF;
             border: 1px solid var(--card-border);
-            border-radius: 16px;
-            padding: 18px;
-            margin-bottom: 14px;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 16px;
             display: flex;
             align-items: center;
             justify-content: space-between;
             cursor: pointer;
-            transition: all 0.25s ease;
-            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+            transition: all 0.3s ease;
+            box-shadow: var(--card-shadow);
         }
 
-        .glass-card:active {
-            transform: scale(0.97);
+        .executive-card:active {
+            transform: scale(0.98);
             border-color: var(--gold-primary);
-            box-shadow: 0 0 20px var(--gold-glow);
+            box-shadow: var(--card-shadow-hover);
         }
 
         .card-heading {
             font-size: 15px;
             font-weight: 700;
-            color: #ffffff;
+            color: var(--text-dark);
+            margin-bottom: 4px;
         }
 
         .card-desc {
             font-size: 12px;
             color: var(--text-muted);
-            margin-top: 4px;
+            line-height: 1.4;
         }
 
-        .pill-gold {
-            background: rgba(251, 191, 36, 0.15);
-            color: var(--gold-primary);
+        /* PREMIUM BADGES */
+        .status-badge {
+            background: var(--gold-light);
+            color: var(--navy-deep);
             border: 1px solid var(--gold-primary);
-            padding: 6px 12px;
-            border-radius: 16px;
+            padding: 6px 14px;
+            border-radius: 20px;
             font-size: 11px;
             font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
         }
 
-        .pill-blue {
-            background: rgba(59, 130, 246, 0.15);
-            color: #93c5fd;
-            border: 1px solid var(--blue-glow);
-            padding: 6px 12px;
-            border-radius: 16px;
+        .status-badge-blue {
+            background: var(--bg-secondary);
+            color: var(--navy-deep);
+            border: 1px solid var(--card-border);
+            padding: 6px 14px;
+            border-radius: 20px;
             font-size: 11px;
             font-weight: 700;
+            text-transform: uppercase;
         }
 
-        .btn-gold {
-            background: linear-gradient(135deg, #f59e0b 0%, #b45309 100%);
-            color: #ffffff;
-            border: none;
+        /* BUTTONS */
+        .btn-premium {
+            background: var(--navy-deep);
+            color: #FFFFFF;
+            border: 2px solid var(--navy-deep);
             width: 100%;
             padding: 16px;
-            border-radius: 12px;
-            font-size: 15px;
-            font-weight: 800;
+            border-radius: 8px;
+            font-size: 14px;
+            font-family: 'Montserrat', sans-serif;
+            font-weight: 700;
             cursor: pointer;
-            box-shadow: 0 4px 20px var(--gold-glow);
+            transition: all 0.3s ease;
             margin-top: 10px;
             text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .btn-premium:active {
+            background: var(--gold-primary);
+            border-color: var(--gold-primary);
+            color: var(--navy-deep);
         }
 
         .btn-ghost {
             background: transparent;
             color: var(--text-muted);
-            border: 1px solid rgba(255, 255, 255, 0.15);
+            border: 1px solid var(--card-border);
             width: 100%;
-            padding: 12px;
-            border-radius: 10px;
+            padding: 14px;
+            border-radius: 8px;
             font-size: 13px;
-            margin-top: 8px;
+            font-weight: 500;
+            margin-top: 12px;
             cursor: pointer;
+            transition: all 0.2s ease;
         }
 
         /* SUCCESS DISPLAY */
         .success-box {
             text-align: center;
-            padding: 24px;
-            background: var(--card-bg);
-            border: 2px solid var(--gold-primary);
-            border-radius: 18px;
-            box-shadow: 0 0 30px var(--gold-glow);
-            backdrop-filter: blur(20px);
+            padding: 32px 24px;
+            background: #FFFFFF;
+            border: 1px solid var(--card-border);
+            border-top: 6px solid var(--gold-primary);
+            border-radius: 12px;
+            box-shadow: var(--card-shadow);
         }
 
         .success-btn {
             display: block;
-            background: linear-gradient(135deg, #10b981, #059669);
-            color: #ffffff;
+            background: var(--gold-primary);
+            color: var(--navy-deep);
             text-decoration: none;
-            padding: 18px;
-            border-radius: 14px;
+            padding: 16px;
+            border-radius: 8px;
+            font-family: 'Montserrat', sans-serif;
             font-weight: 800;
-            font-size: 16px;
-            margin-top: 20px;
-            box-shadow: 0 0 20px rgba(16, 185, 129, 0.5);
+            font-size: 15px;
+            margin-top: 24px;
             text-transform: uppercase;
+            box-shadow: 0 4px 15px rgba(212, 175, 55, 0.3);
         }
     </style>
 </head>
 <body>
 
-    <div class="ambient-bg">
-        <div class="orb orb-1"></div>
-        <div class="orb orb-2"></div>
-    </div>
-
-    <!-- EXPANDED LIVE TICKER -->
+    <!-- TICKER -->
     <div class="ticker-wrap">
         <div class="ticker-move">
             🥇 XAUUSD: BUY @ 2420.50 🚀 | 📈 EURUSD: BULLISH | 👑 JAY EMPIRE VIP: 94.2% WIN RATE | 📊 GBPUSD: TARGET HIT | 🪙 GOLD MASTER VIP ACTIVE
         </div>
     </div>
 
+    <!-- HEADER -->
     <div class="brand-header">
         <div class="emblem-badge">👑</div>
         <div class="brand-title">JAY EMPIRE VIP</div>
         <div class="brand-sub" id="sub-header">Institutional Access Terminal</div>
     </div>
 
+    <!-- TRACKER -->
     <div class="tracker" id="tracker-bar">
         <div class="tracker-dot active" id="t1"></div>
         <div class="tracker-dot" id="t2"></div>
@@ -311,81 +311,81 @@
         <div class="tracker-dot" id="t4"></div>
     </div>
 
-    <!-- HOMEPAGE -->
+    <!-- STEP 1: HOMEPAGE -->
     <div id="step-1" class="panel active">
         <div class="vision-card">
             <strong>👑 WELCOME TO JAY EMPIRE</strong><br>
             Precision trading execution and institutional insights. Select your VIP destination or request specialized digital agency services below.
         </div>
 
-        <div class="glass-card" onclick="chooseDestination('gold', 'JAY GOLD MASTER VIP')">
+        <div class="executive-card" onclick="chooseDestination('gold', 'JAY GOLD MASTER VIP')">
             <div>
                 <div class="card-heading">🪙 JAY GOLD MASTER VIP</div>
-                <div class="card-desc">Gold (XAUUSD) Signals & Technical Analysis</div>
+                <div class="card-desc">Gold (XAUUSD) Signals & Analysis</div>
             </div>
-            <div class="pill-gold">SELECT</div>
+            <div class="status-badge">SELECT</div>
         </div>
 
-        <div class="glass-card" onclick="chooseDestination('fx', 'JAY FX PREMIUM SIGNALS')">
+        <div class="executive-card" onclick="chooseDestination('fx', 'JAY FX PREMIUM SIGNALS')">
             <div>
                 <div class="card-heading">📈 JAY FX PREMIUM SIGNALS</div>
-                <div class="card-desc">Forex Currency Pairs & Indices Execution</div>
+                <div class="card-desc">Forex Currency Pairs & Indices</div>
             </div>
-            <div class="pill-gold">SELECT</div>
+            <div class="status-badge">SELECT</div>
         </div>
 
-        <div class="glass-card" onclick="switchStep('services')">
+        <div class="executive-card" style="margin-top: 24px; border-style: dashed;" onclick="switchStep('services')">
             <div>
-                <div class="card-heading">💼 REQUEST SPECIAL SERVICES</div>
-                <div class="card-desc">Video Ads, Branding, Funnels & Bulk SMS</div>
+                <div class="card-heading">💼 SPECIAL SERVICES</div>
+                <div class="card-desc">Video Ads, Branding, Funnels</div>
             </div>
-            <div class="pill-blue">EXPLORE</div>
+            <div class="status-badge-blue">EXPLORE</div>
         </div>
     </div>
 
-    <!-- SUB-MENU: SPECIAL SERVICES (ROUTED TO @jay_empire247) -->
+    <!-- SUB-MENU: SPECIAL SERVICES -->
     <div id="step-services" class="panel">
         <div class="vision-card">
             <strong>💼 JAY EMPIRE DIGITAL SERVICES</strong><br>
             Tap any service to connect directly with Jay Empire on Telegram.
         </div>
 
-        <div class="glass-card" onclick="openDirectService('High-End Video Ads & Editing')">
+        <div class="executive-card" onclick="openDirectService('High-End Video Ads & Editing')">
             <div>
-                <div class="card-heading">🎬 High-End Video Ads & Editing</div>
+                <div class="card-heading">🎬 High-End Video Ads</div>
                 <div class="card-desc">TikTok/Reels Ads & Cinema Retouching</div>
             </div>
-            <div class="pill-blue">CONNECT</div>
+            <div class="status-badge-blue">CONNECT</div>
         </div>
 
-        <div class="glass-card" onclick="openDirectService('Graphic & Logo Design')">
+        <div class="executive-card" onclick="openDirectService('Graphic & Logo Design')">
             <div>
                 <div class="card-heading">🎨 Brand Design & Flyers</div>
                 <div class="card-desc">Logos, Mockups & Brand Assets</div>
             </div>
-            <div class="pill-blue">CONNECT</div>
+            <div class="status-badge-blue">CONNECT</div>
         </div>
 
-        <div class="glass-card" onclick="openDirectService('Brand Consultancy & Funnels')">
+        <div class="executive-card" onclick="openDirectService('Brand Consultancy & Funnels')">
             <div>
-                <div class="card-heading">🚀 Brand Consultancy & Funnels</div>
+                <div class="card-heading">🚀 Brand Consultancy</div>
                 <div class="card-desc">Growth Strategy & Automation</div>
             </div>
-            <div class="pill-blue">CONNECT</div>
+            <div class="status-badge-blue">CONNECT</div>
         </div>
 
-        <div class="glass-card" onclick="openDirectService('Bulk SMS & Data Reselling Hub')">
+        <div class="executive-card" onclick="openDirectService('Bulk SMS & Data Reselling Hub')">
             <div>
-                <div class="card-heading">📲 Bulk SMS & VTU Data Hub</div>
-                <div class="card-desc">SMS Marketing & Data Reselling Portals</div>
+                <div class="card-heading">📲 Bulk SMS & VTU Hub</div>
+                <div class="card-desc">SMS Marketing & Data Reselling</div>
             </div>
-            <div class="pill-blue">CONNECT</div>
+            <div class="status-badge-blue">CONNECT</div>
         </div>
 
         <button class="btn-ghost" onclick="switchStep(1)">⬅️ Back to Main Menu</button>
     </div>
 
-    <!-- TERMS & CONDITIONS (UPDATED WITH @jay_empire247 ASSISTANCE) -->
+    <!-- STEP 2: TERMS & CONDITIONS -->
     <div id="step-2" class="panel">
         <div class="vision-card">
             <strong>⚠️ TERMS OF MEMBERSHIP</strong><br><br>
@@ -393,68 +393,79 @@
             2. <strong>Instant Access:</strong> Paystack issues your encrypted single-use access link immediately on-screen.<br>
             3. <strong>Executive Support:</strong> If you face any issues, contact support directly at <strong>@jay_empire247</strong> on Telegram.
         </div>
-        <button class="btn-gold" onclick="switchStep(3)">✅ Accept & Proceed</button>
+        <button class="btn-premium" onclick="switchStep(3)">Agree & Proceed</button>
         <button class="btn-ghost" onclick="switchStep(1)">⬅️ Back</button>
     </div>
 
-    <!-- REGIONAL CURRENCY -->
+    <!-- STEP 3: REGIONAL CURRENCY -->
     <div id="step-3" class="panel">
-        <div class="glass-card" onclick="chooseCurrency('GHS', 15.50, 'GHS ')">
+        <div class="vision-card">
+            <strong>🌍 SELECT YOUR REGION</strong><br>
+            Choose your local currency for seamless checkout via Paystack.
+        </div>
+
+        <div class="executive-card" onclick="chooseCurrency('GHS', 15.50, 'GHS ')">
             <div>
                 <div class="card-heading">🇬🇭 Ghana Market</div>
                 <div class="card-desc">MTN MoMo, Telecel Cash & Cards</div>
             </div>
-            <div class="pill-gold">GHS</div>
+            <div class="status-badge">GHS</div>
         </div>
 
-        <div class="glass-card" onclick="chooseCurrency('NGN', 1600.0, '₦')">
+        <div class="executive-card" onclick="chooseCurrency('NGN', 1600.0, '₦')">
             <div>
                 <div class="card-heading">🇳🇬 Nigeria Market</div>
                 <div class="card-desc">Bank Transfers, USSD & Cards</div>
             </div>
-            <div class="pill-gold">NGN</div>
+            <div class="status-badge">NGN</div>
         </div>
 
-        <div class="glass-card" onclick="chooseCurrency('KES', 130.0, 'KSh ')">
+        <div class="executive-card" onclick="chooseCurrency('KES', 130.0, 'KSh ')">
             <div>
                 <div class="card-heading">🇰🇪 Kenya Market</div>
                 <div class="card-desc">M-Pesa & Cards</div>
             </div>
-            <div class="pill-gold">KES</div>
+            <div class="status-badge">KES</div>
         </div>
 
-        <div class="glass-card" onclick="chooseCurrency('USD', 1.0, '$')">
+        <div class="executive-card" onclick="chooseCurrency('USD', 1.0, '$')">
             <div>
                 <div class="card-heading">🌍 International</div>
                 <div class="card-desc">Global Credit / Debit Cards</div>
             </div>
-            <div class="pill-gold">USD</div>
+            <div class="status-badge">USD</div>
         </div>
 
         <button class="btn-ghost" onclick="switchStep(2)">⬅️ Back</button>
     </div>
 
-    <!-- DURATION DURATION TIER -->
+    <!-- STEP 4: DURATION PLANS -->
     <div id="step-4" class="panel">
         <div id="plans-wrapper"></div>
         <button class="btn-ghost" onclick="switchStep(3)">⬅️ Back</button>
     </div>
 
-    <!-- ON-SCREEN SUCCESS REDIRECT (NO BOT CLOSING ISSUES) -->
+    <!-- SUCCESS SCREEN -->
     <div id="step-success" class="panel">
         <div class="success-box">
-            <div style="font-size: 40px; margin-bottom: 8px;">🎉</div>
-            <h2 style="color: var(--gold-primary); margin: 0 0 8px 0; font-size: 20px;">PAYMENT VERIFIED!</h2>
-            <p style="font-size: 13px; color: var(--text-muted); margin: 0;">Your VIP Access Link is active and ready below:</p>
+            <div style="font-size: 48px; margin-bottom: 12px;">✅</div>
+            <h2 style="color: var(--navy-deep); margin: 0 0 8px 0; font-size: 22px;">PAYMENT VERIFIED</h2>
+            <p style="font-size: 14px; color: var(--text-muted); margin: 0; line-height: 1.5;">Your transaction was successful. Your secure VIP Access Link is now active.</p>
             
-            <a id="vip-join-btn" href="#" target="_blank" class="success-btn">🚀 ENTER VIP CHANNEL NOW</a>
-            <p style="font-size: 11px; color: var(--text-muted); margin-top: 14px;">Need help? Contact <strong>@jay_empire247</strong></p>
+            <a id="vip-join-btn" href="#" target="_blank" class="success-btn">ENTER VIP CHANNEL</a>
+            <p style="font-size: 12px; color: var(--text-muted); margin-top: 20px;">Need help? Contact <strong>@jay_empire247</strong></p>
         </div>
     </div>
 
     <script>
         const tg = window.Telegram.WebApp;
         tg.expand();
+        tg.ready();
+
+        // Standardize Telegram WebApp UI Colors if available
+        if (tg.setHeaderColor) {
+            tg.setHeaderColor('#FFFFFF'); 
+        }
 
         let targetChannel = '';
         let targetChannelTitle = '';
@@ -491,6 +502,7 @@
             } else {
                 document.getElementById(`step-${stepVal}`).classList.add('active');
             }
+            window.scrollTo(0, 0);
         }
 
         function chooseDestination(key, title) {
@@ -530,15 +542,16 @@
                     amountInSubunits = Math.round(total * 100);
                 }
 
+                // Injecting new executive card style
                 const card = document.createElement('div');
-                card.className = 'glass-card';
+                card.className = 'executive-card';
                 card.onclick = () => triggerPaystack(amountInSubunits, plan.days);
                 card.innerHTML = `
                     <div>
                         <div class="card-heading">${plan.name}</div>
-                        <div class="card-desc">Payable: ${priceText}</div>
+                        <div class="card-desc">Payable: <strong>${priceText}</strong></div>
                     </div>
-                    <div class="pill-gold">PAY NOW</div>
+                    <div class="status-badge">PAY</div>
                 `;
                 wrapper.appendChild(card);
             });
@@ -559,7 +572,6 @@
                     days: days
                 },
                 callback: function(response) {
-                    // SHOW DIRECT ON-SCREEN ACCESS BUTTON IMMEDIATELY UPON PAYMENT
                     document.getElementById('tracker-bar').style.display = 'none';
                     const activeLink = targetChannel === 'gold' ? GOLD_LINK : FOREX_LINK;
                     
