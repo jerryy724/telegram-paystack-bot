@@ -10,7 +10,7 @@
     <!-- Premium Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Montserrat:wght@600;700;800&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Montserrat:wght@500;600;700;800&display=swap" rel="stylesheet">
     
     <style>
         :root {
@@ -18,13 +18,12 @@
             --navy-deep: #0B132B;
             --navy-light: #1C2541;
             --gold-primary: #D4AF37;
-            --gold-gradient: linear-gradient(135deg, #F9F2DB 0%, #D4AF37 100%);
-            --bg-light: #F8F9FA;
+            --bg-light: #F4F6F9;
             --white: #FFFFFF;
             --text-dark: #1A1A1A;
             --text-muted: #6B7280;
-            /* The deep, soft shadow from your reference image */
-            --floating-shadow: 0 20px 40px rgba(0, 0, 0, 0.12);
+            --border-light: #E5E7EB;
+            --floating-shadow: 0 16px 32px rgba(11, 19, 43, 0.08);
         }
 
         * {
@@ -46,31 +45,31 @@
             font-family: 'Montserrat', sans-serif;
         }
 
-        /* HERO SECTION (The Dark Top Background) */
+        /* HERO SECTION */
         .hero-section {
             background: var(--navy-deep);
-            background-image: radial-gradient(circle at top right, var(--navy-light) 0%, transparent 60%);
-            padding: 30px 20px 90px 20px; /* Extra bottom padding for cards to overlap */
+            background-image: radial-gradient(circle at top right, var(--navy-light) 0%, transparent 70%);
+            padding: 25px 20px 100px 20px; 
             text-align: center;
-            border-bottom-left-radius: 40px;
-            border-bottom-right-radius: 40px;
+            border-bottom-left-radius: 35px;
+            border-bottom-right-radius: 35px;
             position: relative;
         }
 
         .ticker-wrap {
-            background: rgba(255, 255, 255, 0.05);
-            border: 1px solid rgba(212, 175, 55, 0.2);
-            border-radius: 30px;
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid rgba(212, 175, 55, 0.15);
+            border-radius: 20px;
             overflow: hidden;
             white-space: nowrap;
-            padding: 8px 0;
-            margin-bottom: 24px;
+            padding: 6px 0;
+            margin-bottom: 28px;
         }
 
         .ticker-move {
             display: inline-block;
             animation: ticker 25s linear infinite;
-            font-size: 11px;
+            font-size: 10px;
             font-weight: 600;
             color: var(--gold-primary);
             letter-spacing: 1px;
@@ -87,17 +86,17 @@
         }
 
         .brand-title {
-            font-size: 26px;
+            font-size: 28px;
             font-weight: 800;
-            margin-bottom: 6px;
+            margin-bottom: 8px;
             letter-spacing: -0.5px;
         }
 
         .brand-sub {
-            font-size: 13px;
+            font-size: 14px;
             color: #A0AABF;
             font-weight: 400;
-            max-width: 280px;
+            max-width: 300px;
             margin: 0 auto;
             line-height: 1.5;
         }
@@ -105,15 +104,15 @@
         /* MAIN CONTENT AREA */
         .content-wrapper {
             padding: 0 20px 40px 20px;
-            margin-top: -60px; /* Pulls the cards up to overlap the dark background */
+            margin-top: -65px; 
         }
 
         /* PANELS */
         .panel {
             display: none;
             opacity: 0;
-            transform: translateY(15px);
-            transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+            transform: translateY(10px);
+            transition: all 0.4s ease;
         }
 
         .panel.active {
@@ -122,18 +121,19 @@
             transform: translateY(0);
         }
 
-        /* THE FLOATING CARDS (Matching Reference #2) */
+        /* FLOATING CARDS */
         .floating-card {
             background: var(--white);
-            border-radius: 24px;
-            padding: 32px 24px 45px 24px; /* Big bottom padding for the hanging button */
-            margin-bottom: 40px; /* Space between cards */
+            border-radius: 20px;
+            padding: 35px 25px 45px 25px; 
+            margin-bottom: 35px; 
             text-align: center;
             box-shadow: var(--floating-shadow);
             position: relative;
             display: flex;
             flex-direction: column;
             align-items: center;
+            border: 1px solid rgba(255,255,255,0.5);
         }
 
         .card-pill-header {
@@ -145,83 +145,182 @@
             letter-spacing: 1.5px;
             padding: 8px 20px;
             border-radius: 30px;
-            margin-bottom: 16px;
-            box-shadow: 0 4px 10px rgba(11, 19, 43, 0.2);
+            margin-bottom: 20px;
+            box-shadow: 0 4px 10px rgba(11, 19, 43, 0.15);
         }
 
         .card-icon {
-            font-size: 32px;
-            margin-bottom: 12px;
+            font-size: 36px;
+            margin-bottom: 15px;
         }
 
         .card-title {
-            font-size: 20px;
+            font-size: 22px;
             color: var(--navy-deep);
-            margin-bottom: 8px;
+            margin-bottom: 10px;
+            font-weight: 700;
         }
 
         .card-desc {
-            font-size: 13px;
+            font-size: 14px;
             color: var(--text-muted);
-            line-height: 1.5;
+            line-height: 1.6;
             margin-bottom: 10px;
         }
 
-        /* THE "DROP DOWN" HANGING BUTTON */
+        /* UNIFORM ACTION BUTTONS */
         .card-action-btn {
             position: absolute;
-            bottom: -22px; /* Pulls the button halfway out of the card */
+            bottom: -22px; 
             background: var(--gold-primary);
             color: var(--navy-deep);
             border: none;
             font-family: 'Montserrat', sans-serif;
             font-size: 14px;
-            font-weight: 800;
-            padding: 14px 40px;
+            font-weight: 700;
+            padding: 15px 40px;
             border-radius: 30px;
             text-transform: uppercase;
             letter-spacing: 1px;
             cursor: pointer;
-            box-shadow: 0 10px 20px rgba(212, 175, 55, 0.3);
+            box-shadow: 0 8px 20px rgba(212, 175, 55, 0.3);
             transition: transform 0.2s ease, box-shadow 0.2s ease;
         }
 
         .card-action-btn:active {
-            transform: scale(0.95);
-            box-shadow: 0 5px 10px rgba(212, 175, 55, 0.2);
+            transform: scale(0.96);
+            box-shadow: 0 4px 10px rgba(212, 175, 55, 0.2);
         }
 
-        /* SECONDARY CARD STYLE (For Services & Back Buttons) */
-        .outline-card {
-            background: transparent;
-            border: 2px dashed #CBD5E1;
-            border-radius: 20px;
-            padding: 24px;
-            text-align: center;
-            margin-bottom: 30px;
-        }
-
-        .outline-btn {
+        /* SLEEK SERVICES BANNER ON HOME */
+        .services-banner {
             background: var(--white);
+            border-radius: 16px;
+            padding: 20px;
+            text-align: center;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.04);
+            margin-bottom: 30px;
+            border: 1px solid var(--border-light);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .services-text {
+            text-align: left;
+        }
+
+        .services-banner h3 {
+            color: var(--navy-deep);
+            font-size: 15px;
+            margin-bottom: 4px;
+        }
+        
+        .services-banner p {
+            font-size: 12px;
+            color: var(--text-muted);
+        }
+
+        .services-btn {
+            background: transparent;
             color: var(--navy-deep);
             border: 2px solid var(--navy-deep);
             font-family: 'Montserrat', sans-serif;
-            font-size: 13px;
+            font-size: 12px;
             font-weight: 700;
-            padding: 12px 30px;
-            border-radius: 30px;
-            margin-top: 16px;
+            padding: 10px 18px;
+            border-radius: 20px;
             cursor: pointer;
             text-transform: uppercase;
+        }
+
+        /* SERVICES GRID */
+        .service-list-item {
+            background: var(--white);
+            border-radius: 16px;
+            padding: 20px;
+            margin-bottom: 15px;
+            display: flex;
+            align-items: center;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.03);
+            border: 1px solid var(--border-light);
+            cursor: pointer;
+        }
+
+        .service-list-item .icon {
+            font-size: 24px;
+            margin-right: 15px;
+            background: var(--bg-light);
+            width: 50px;
+            height: 50px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 12px;
+        }
+
+        .service-list-item .info h4 {
+            color: var(--navy-deep);
+            font-size: 15px;
+            margin-bottom: 4px;
+        }
+
+        .service-list-item .info p {
+            font-size: 12px;
+            color: var(--text-muted);
+        }
+
+        .service-action {
+            margin-left: auto;
+            color: var(--gold-primary);
+            font-size: 20px;
+        }
+
+        /* REGION LIST CONTAINER (Scrollable for all Paystack supported regions) */
+        .regions-scroll-container {
+            max-height: 280px;
+            overflow-y: auto;
+            width: 100%;
+            margin-bottom: 10px;
+            padding-right: 4px;
+        }
+
+        .region-btn {
+            background: var(--bg-light);
+            color: var(--navy-deep);
+            border: 1px solid var(--border-light);
+            font-family: 'Montserrat', sans-serif;
+            font-size: 13px;
+            font-weight: 600;
+            padding: 14px 16px;
+            border-radius: 14px;
+            margin-bottom: 10px;
+            cursor: pointer;
+            width: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: flex-start;
+            transition: background 0.2s, border-color 0.2s;
+        }
+
+        .region-btn:hover {
+            border-color: var(--gold-primary);
+            background: #FFF;
+        }
+
+        .region-btn span {
+            font-size: 20px;
+            margin-right: 12px;
         }
 
         /* PRICING SPECIFIC DISPLAY */
         .price-display {
             font-family: 'Montserrat', sans-serif;
-            font-size: 32px;
+            font-size: 34px;
             font-weight: 800;
             color: var(--text-dark);
-            margin: 10px 0;
+            margin: 12px 0;
+            letter-spacing: -1px;
         }
 
         .price-sub {
@@ -229,6 +328,38 @@
             color: var(--text-muted);
             text-transform: uppercase;
             letter-spacing: 1px;
+            font-weight: 500;
+        }
+
+        /* TERMS AND CONDITIONS */
+        .tc-container {
+            background: #E5E7EB;
+            border-radius: 12px;
+            padding: 15px;
+            margin: 20px 0 40px 0;
+            display: flex;
+            align-items: flex-start;
+            text-align: left;
+        }
+
+        .tc-container input[type="checkbox"] {
+            margin-top: 4px;
+            margin-right: 12px;
+            width: 18px;
+            height: 18px;
+            accent-color: var(--navy-deep);
+        }
+
+        .tc-container label {
+            font-size: 12px;
+            color: var(--text-dark);
+            line-height: 1.5;
+        }
+
+        .tc-container label a {
+            color: var(--navy-deep);
+            font-weight: 600;
+            text-decoration: underline;
         }
 
         /* BACK NAVIGATION */
@@ -240,24 +371,25 @@
             font-weight: 500;
             margin: 20px auto 40px auto;
             text-decoration: none;
+            cursor: pointer;
         }
 
         /* BACKGROUND ACCENT LINES */
         .bg-lines {
             position: fixed;
-            top: 50%;
-            left: -50px;
-            width: 150px;
-            height: 20px;
-            border: 3px solid rgba(212, 175, 55, 0.1);
-            border-radius: 20px;
+            top: 40%;
+            left: -60px;
+            width: 200px;
+            height: 1px;
+            background: rgba(212, 175, 55, 0.2);
             z-index: -1;
-            transform: rotate(-15deg);
+            transform: rotate(-25deg);
         }
         .bg-lines.right {
             left: auto;
-            right: -50px;
-            top: 70%;
+            right: -60px;
+            top: 60%;
+            transform: rotate(25deg);
         }
     </style>
 </head>
@@ -290,7 +422,7 @@
                 <div class="card-pill-header">COMMODITIES</div>
                 <div class="card-icon">🪙</div>
                 <h2 class="card-title">Gold Master VIP</h2>
-                <p class="card-desc">Exclusive XAUUSD signals, high-probability setups, and technical analysis.</p>
+                <p class="card-desc">Exclusive XAUUSD signals, high-probability setups, and institutional analysis.</p>
                 <button class="card-action-btn" onclick="chooseDestination('gold', 'Gold Master VIP')">SELECT PLAN</button>
             </div>
 
@@ -299,58 +431,112 @@
                 <div class="card-icon">📈</div>
                 <h2 class="card-title">FX Premium Signals</h2>
                 <p class="card-desc">Curated execution on major currency pairs and global market indices.</p>
-                <button class="card-action-btn" style="background: var(--navy-deep); color: var(--white);" onclick="chooseDestination('fx', 'FX Premium Signals')">SELECT PLAN</button>
+                <button class="card-action-btn" onclick="chooseDestination('fx', 'FX Premium Signals')">SELECT PLAN</button>
             </div>
 
-            <div class="outline-card">
-                <h3 style="color: var(--navy-deep); margin-bottom: 6px; font-size: 16px;">💼 Special Services</h3>
-                <p style="font-size: 12px; color: var(--text-muted);">Video Ads, Branding, Funnels & Data</p>
-                <button class="outline-btn" onclick="switchStep('services')">EXPLORE SERVICES</button>
+            <div class="services-banner">
+                <div class="services-text">
+                    <h3>Special Services</h3>
+                    <p>Digital, Brand & Tech Hub</p>
+                </div>
+                <button class="services-btn" onclick="switchStep('services')">EXPLORE</button>
             </div>
         </div>
 
-        <!-- STEP SERVICES -->
+        <!-- STEP SERVICES (Expanded) -->
         <div id="step-services" class="panel">
-            <div class="floating-card">
-                <div class="card-pill-header">DIGITAL AGENCY</div>
-                <div class="card-icon">🎬</div>
-                <h2 class="card-title">High-End Video Ads</h2>
-                <p class="card-desc">TikTok/Reels Ads & Cinema Retouching</p>
-                <button class="card-action-btn" onclick="openDirectService('High-End Video Ads')">CONNECT NOW</button>
+            
+            <div class="service-list-item" onclick="openDirectService('Video Editing')">
+                <div class="icon">🎬</div>
+                <div class="info">
+                    <h4>Video Editing</h4>
+                    <p>High-end commercials & reels.</p>
+                </div>
+                <div class="service-action">➔</div>
             </div>
 
-            <div class="floating-card">
-                <div class="card-pill-header">DESIGN</div>
-                <div class="card-icon">🎨</div>
-                <h2 class="card-title">Brand Assets</h2>
-                <p class="card-desc">Executive Logos, Mockups & Flyers</p>
-                <button class="card-action-btn" onclick="openDirectService('Graphic Design')">CONNECT NOW</button>
+            <div class="service-list-item" onclick="openDirectService('Brand & Digital Consultancy')">
+                <div class="icon">💼</div>
+                <div class="info">
+                    <h4>Brand & Digital Consultancy</h4>
+                    <p>Executive strategy & design.</p>
+                </div>
+                <div class="service-action">➔</div>
+            </div>
+
+            <div class="service-list-item" onclick="openDirectService('Bulk SMS Money System')">
+                <div class="icon">📱</div>
+                <div class="info">
+                    <h4>Bulk SMS</h4>
+                    <p>Marketing campaigns & guides.</p>
+                </div>
+                <div class="service-action">➔</div>
+            </div>
+
+            <div class="service-list-item" onclick="openDirectService('Token Services')">
+                <div class="icon">🪙</div>
+                <div class="info">
+                    <h4>Token</h4>
+                    <p>Digital assets & Web3 solutions.</p>
+                </div>
+                <div class="service-action">➔</div>
             </div>
 
             <div class="nav-back" onclick="switchStep(1)">⬅️ Back to Main Menu</div>
         </div>
 
-        <!-- STEP 2: REGIONAL CURRENCY -->
+        <!-- STEP 2: REGIONAL CURRENCY (All Paystack Supported Regions Added) -->
         <div id="step-2" class="panel">
             
             <div class="floating-card" style="padding-bottom: 30px;">
                 <div class="card-pill-header">STEP 1 OF 2</div>
                 <h2 class="card-title">Select Region</h2>
-                <p class="card-desc">Choose your local currency for seamless payment processing.</p>
+                <p class="card-desc" style="margin-bottom: 20px;">Choose your local region and currency for payment processing.</p>
                 
-                <div style="width: 100%; margin-top: 20px;">
-                    <button class="outline-btn" style="width: 100%; margin-bottom: 10px;" onclick="chooseCurrency('GHS', 15.50, 'GHS ')">🇬🇭 Ghana (MoMo/Card)</button>
-                    <button class="outline-btn" style="width: 100%; margin-bottom: 10px;" onclick="chooseCurrency('NGN', 1600.0, '₦')">🇳🇬 Nigeria (Transfer/Card)</button>
-                    <button class="outline-btn" style="width: 100%; margin-bottom: 10px;" onclick="chooseCurrency('USD', 1.0, '$')">🌍 International (USD)</button>
+                <div class="regions-scroll-container">
+                    <button class="region-btn" onclick="chooseCurrency('GHS', 15.50, 'GHS ')">
+                        <span>🇬🇭</span> Ghana (GHS - Cedi)
+                    </button>
+                    <button class="region-btn" onclick="chooseCurrency('NGN', 1600.0, '₦')">
+                        <span>🇳🇬</span> Nigeria (NGN - Naira)
+                    </button>
+                    <button class="region-btn" onclick="chooseCurrency('ZAR', 18.20, 'R ')">
+                        <span>🇿🇦</span> South Africa (ZAR - Rand)
+                    </button>
+                    <button class="region-btn" onclick="chooseCurrency('KES', 130.0, 'KSh ')">
+                        <span>🇰🇪</span> Kenya (KES - Shilling)
+                    </button>
+                    <button class="region-btn" onclick="chooseCurrency('USD', 1.0, '$')">
+                        <span>🌍</span> International (USD - Dollar)
+                    </button>
+                    <button class="region-btn" onclick="chooseCurrency('GBP', 0.78, '£')">
+                        <span>🇬🇧</span> United Kingdom (GBP - Pound)
+                    </button>
+                    <button class="region-btn" onclick="chooseCurrency('EUR', 0.92, '€')">
+                        <span>🇪🇺</span> Eurozone (EUR - Euro)
+                    </button>
+                    <button class="region-btn" onclick="chooseCurrency('XOF', 605.0, 'CFA ')">
+                        <span>🌍</span> Francophone West Africa (XOF)
+                    </button>
                 </div>
             </div>
 
             <div class="nav-back" onclick="switchStep(1)">⬅️ Cancel</div>
         </div>
 
-        <!-- STEP 3: DURATION PLANS (Generated by JS) -->
+        <!-- STEP 3: DURATION PLANS & T&C -->
         <div id="step-3" class="panel">
+            
             <div id="plans-wrapper"></div>
+            
+            <!-- Global Terms & Conditions Checkbox -->
+            <div class="tc-container">
+                <input type="checkbox" id="tc-checkbox">
+                <label for="tc-checkbox">
+                    I have read and agree to the <a href="#" onclick="alert('Terms & Conditions: Trading involves risk. Past performance is not indicative of future results. No refunds after access is granted.'); return false;">Terms & Conditions</a> and acknowledge the risks associated with financial trading.
+                </label>
+            </div>
+
             <div class="nav-back" onclick="switchStep(2)">⬅️ Back to Regions</div>
         </div>
 
@@ -375,7 +561,7 @@
         tg.ready();
 
         if (tg.setHeaderColor) {
-            tg.setHeaderColor('#0B132B'); // Matches the dark hero background
+            tg.setHeaderColor('#0B132B'); 
         }
 
         let targetChannel = '';
@@ -397,11 +583,11 @@
             document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
             document.getElementById(`step-${stepVal}`).classList.add('active');
             
-            // Adjust header text based on step
             const subTitle = document.getElementById('header-subtitle');
             if(stepVal === 1) subTitle.innerText = "Select your plan for precision trading and institutional insights.";
-            if(stepVal === 2) subTitle.innerText = "Choose your preferred payment currency.";
+            if(stepVal === 2) subTitle.innerText = "Choose your preferred payment region and currency.";
             if(stepVal === 3) subTitle.innerText = `Select a duration for ${targetChannelTitle}.`;
+            if(stepVal === 'services') subTitle.innerText = "Explore our premium digital agency and consultancy services.";
             
             window.scrollTo(0, 0);
         }
@@ -421,6 +607,9 @@
             activeCurrency = curr;
             conversionRate = rate;
             currencySymbol = symbol;
+            
+            document.getElementById('tc-checkbox').checked = false;
+            
             buildPlansUI();
             switchStep(3);
         }
@@ -448,10 +637,23 @@
                     <div class="card-pill-header">${plan.name}</div>
                     <div class="price-display">${currencySymbol}${priceText}</div>
                     <div class="price-sub">Total Payable</div>
-                    <button class="card-action-btn" onclick="triggerPaystack(${amountInSubunits}, ${plan.days})">PAY NOW</button>
+                    <button class="card-action-btn" onclick="validateAndPay(${amountInSubunits}, ${plan.days})">PAY NOW</button>
                 `;
                 wrapper.appendChild(card);
             });
+        }
+
+        function validateAndPay(amountSubunits, days) {
+            const isChecked = document.getElementById('tc-checkbox').checked;
+            if (!isChecked) {
+                if (tg.showAlert) {
+                    tg.showAlert("Please agree to the Terms & Conditions before proceeding.");
+                } else {
+                    alert("Please agree to the Terms & Conditions before proceeding.");
+                }
+                return;
+            }
+            triggerPaystack(amountSubunits, days);
         }
 
         function triggerPaystack(amountSubunits, days) {
@@ -462,7 +664,7 @@
                 key: 'pk_live_c470302d79292c5df97f088509a5a99d39788fc8',
                 email: userEmail,
                 amount: amountSubunits,
-                currency: activeCurrency === 'GHS' || amountSubunits === 10 ? 'GHS' : activeCurrency,
+                currency: activeCurrency,
                 metadata: { telegram_id: user ? user.id : 0, channel_type: targetChannel, days: days },
                 callback: function(response) {
                     const activeLink = targetChannel === 'gold' ? GOLD_LINK : FOREX_LINK;
