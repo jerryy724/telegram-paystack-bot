@@ -40,6 +40,8 @@
             min-height: 100vh;
             overflow-x: hidden;
             position: relative;
+            display: flex;
+            flex-direction: column;
         }
 
         h1, h2, h3, .card-title, .brand-title {
@@ -148,8 +150,9 @@
 
         /* MAIN CONTENT AREA */
         .content-wrapper {
-            padding: 0 20px 40px 20px;
+            padding: 0 20px 20px 20px;
             margin-top: -65px; 
+            flex: 1;
         }
 
         /* PANELS */
@@ -423,9 +426,40 @@
             color: var(--text-muted);
             font-size: 14px;
             font-weight: 500;
-            margin: 20px auto 40px auto;
+            margin: 20px auto 10px auto;
             text-decoration: none;
             cursor: pointer;
+        }
+
+        /* CONTACT ADMIN SECTION */
+        .contact-admin-wrapper {
+            text-align: center;
+            margin: 15px 0 25px 0;
+            font-size: 13px;
+            color: var(--text-muted);
+            font-weight: 500;
+        }
+
+        .contact-admin-link {
+            color: #2563EB;
+            font-weight: 700;
+            text-decoration: underline;
+            cursor: pointer;
+        }
+
+        /* FOOTER */
+        .app-footer {
+            text-align: center;
+            padding: 20px;
+            font-family: 'Montserrat', sans-serif;
+            font-size: 12px;
+            font-weight: 700;
+            color: var(--navy-deep);
+            letter-spacing: 0.5px;
+            text-transform: uppercase;
+            border-top: 1px solid rgba(0, 0, 0, 0.05);
+            background: rgba(255, 255, 255, 0.5);
+            backdrop-filter: blur(5px);
         }
 
         /* MODAL FOR MANDATORY READ TERMS */
@@ -540,11 +574,20 @@
                 </div>
                 <button class="services-btn" onclick="switchStep('services')">EXPLORE</button>
             </div>
+
+            <div class="contact-admin-wrapper">
+                Contact <a href="https://t.me/jay_empire247" target="_blank" class="contact-admin-link">Admin</a> for support
+            </div>
         </div>
 
         <!-- STEP 2: USD SUBSCRIPTION DURATION OPTIONS -->
         <div id="step-2" class="panel">
             <div id="usd-plans-wrapper"></div>
+            
+            <div class="contact-admin-wrapper">
+                Contact <a href="https://t.me/jay_empire247" target="_blank" class="contact-admin-link">Admin</a> for support
+            </div>
+
             <div class="nav-back" onclick="switchStep(1)">⬅️ Back to Signals</div>
         </div>
 
@@ -583,6 +626,10 @@
                 </div>
             </div>
 
+            <div class="contact-admin-wrapper">
+                Contact <a href="https://t.me/jay_empire247" target="_blank" class="contact-admin-link">Admin</a> for support
+            </div>
+
             <div class="nav-back" onclick="switchStep(2)">⬅️ Back to Durations</div>
         </div>
 
@@ -605,6 +652,10 @@
                 </div>
 
                 <button id="final-pay-btn" class="card-action-btn" onclick="proceedToPaystack()" disabled>PROCEED TO PAY</button>
+            </div>
+
+            <div class="contact-admin-wrapper">
+                Contact <a href="https://t.me/jay_empire247" target="_blank" class="contact-admin-link">Admin</a> for support
             </div>
 
             <div class="nav-back" onclick="switchStep(3)">⬅️ Back to Regions</div>
@@ -648,6 +699,10 @@
                 <div class="service-action">➔</div>
             </div>
 
+            <div class="contact-admin-wrapper">
+                Contact <a href="https://t.me/jay_empire247" target="_blank" class="contact-admin-link">Admin</a> for support
+            </div>
+
             <div class="nav-back" onclick="switchStep(1)">⬅️ Back to Main Menu</div>
         </div>
 
@@ -661,6 +716,10 @@
                 <a id="vip-join-btn" href="#" target="_blank" style="text-decoration: none;">
                     <button class="card-action-btn">ENTER VIP CHANNEL</button>
                 </a>
+            </div>
+
+            <div class="contact-admin-wrapper">
+                Contact <a href="https://t.me/jay_empire247" target="_blank" class="contact-admin-link">Admin</a> for support
             </div>
         </div>
 
@@ -678,6 +737,11 @@
             <button class="modal-btn" onclick="acceptAndCloseTC()">I HAVE READ AND ACCEPT</button>
         </div>
     </div>
+
+    <!-- PERSISTENT FOOTER -->
+    <footer class="app-footer">
+        Powered by Jay Empire Tech
+    </footer>
 
     <script>
         const tg = window.Telegram.WebApp;
