@@ -39,10 +39,55 @@
             color: var(--text-dark);
             min-height: 100vh;
             overflow-x: hidden;
+            position: relative;
         }
 
         h1, h2, h3, .card-title, .brand-title {
             font-family: 'Montserrat', sans-serif;
+        }
+
+        /* BACKGROUND AESTHETICS & SHAPES */
+        .bg-shapes-container {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            z-index: -1;
+            overflow: hidden;
+            pointer-events: none;
+        }
+
+        .bg-shape {
+            position: absolute;
+            border-radius: 50%;
+            filter: blur(40px);
+            opacity: 0.25;
+        }
+
+        .shape-1 {
+            top: -50px;
+            right: -50px;
+            width: 250px;
+            height: 250px;
+            background: var(--gold-primary);
+        }
+
+        .shape-2 {
+            bottom: 10%;
+            left: -80px;
+            width: 300px;
+            height: 300px;
+            background: var(--navy-light);
+        }
+
+        .bg-svg-strokes {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            opacity: 0.12;
         }
 
         /* HERO SECTION */
@@ -123,7 +168,8 @@
 
         /* FLOATING CARDS */
         .floating-card {
-            background: var(--white);
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
             border-radius: 20px;
             padding: 35px 25px 45px 25px; 
             margin-bottom: 35px; 
@@ -133,7 +179,7 @@
             display: flex;
             flex-direction: column;
             align-items: center;
-            border: 1px solid rgba(255,255,255,0.5);
+            border: 1px solid rgba(255,255,255,0.8);
         }
 
         .card-pill-header {
@@ -187,14 +233,21 @@
             transition: transform 0.2s ease, box-shadow 0.2s ease;
         }
 
-        .card-action-btn:active {
+        .card-action-btn:disabled {
+            background: #D1D5DB;
+            color: #9CA3AF;
+            box-shadow: none;
+            cursor: not-allowed;
+        }
+
+        .card-action-btn:active:not(:disabled) {
             transform: scale(0.96);
             box-shadow: 0 4px 10px rgba(212, 175, 55, 0.2);
         }
 
-        /* SLEEK SERVICES BANNER ON HOME */
+        /* SLEEK SERVICES BANNER */
         .services-banner {
-            background: var(--white);
+            background: rgba(255, 255, 255, 0.9);
             border-radius: 16px;
             padding: 20px;
             text-align: center;
@@ -236,7 +289,7 @@
 
         /* SERVICES GRID */
         .service-list-item {
-            background: var(--white);
+            background: rgba(255, 255, 255, 0.95);
             border-radius: 16px;
             padding: 20px;
             margin-bottom: 15px;
@@ -276,7 +329,7 @@
             font-size: 20px;
         }
 
-        /* REGION LIST CONTAINER (Scrollable for all Paystack supported regions) */
+        /* REGION LIST CONTAINER */
         .regions-scroll-container {
             max-height: 280px;
             overflow-y: auto;
@@ -336,7 +389,7 @@
             background: #E5E7EB;
             border-radius: 12px;
             padding: 15px;
-            margin: 20px 0 40px 0;
+            margin: 20px 0 30px 0;
             display: flex;
             align-items: flex-start;
             text-align: left;
@@ -356,10 +409,11 @@
             line-height: 1.5;
         }
 
-        .tc-container label a {
+        .tc-link {
             color: var(--navy-deep);
-            font-weight: 600;
+            font-weight: 700;
             text-decoration: underline;
+            cursor: pointer;
         }
 
         /* BACK NAVIGATION */
@@ -374,32 +428,77 @@
             cursor: pointer;
         }
 
-        /* BACKGROUND ACCENT LINES */
-        .bg-lines {
+        /* MODAL FOR MANDATORY READ TERMS */
+        .modal-overlay {
+            display: none;
             position: fixed;
-            top: 40%;
-            left: -60px;
-            width: 200px;
-            height: 1px;
-            background: rgba(212, 175, 55, 0.2);
-            z-index: -1;
-            transform: rotate(-25deg);
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            background: rgba(11, 19, 43, 0.7);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
         }
-        .bg-lines.right {
-            left: auto;
-            right: -60px;
-            top: 60%;
-            transform: rotate(25deg);
+
+        .modal-content {
+            background: var(--white);
+            border-radius: 20px;
+            padding: 25px;
+            max-width: 400px;
+            width: 100%;
+            max-height: 80vh;
+            display: flex;
+            flex-direction: column;
+            box-shadow: var(--floating-shadow);
+        }
+
+        .modal-header {
+            font-family: 'Montserrat', sans-serif;
+            font-size: 18px;
+            font-weight: 700;
+            color: var(--navy-deep);
+            margin-bottom: 12px;
+        }
+
+        .modal-body {
+            font-size: 13px;
+            color: var(--text-muted);
+            line-height: 1.6;
+            overflow-y: auto;
+            margin-bottom: 20px;
+            padding-right: 8px;
+            text-align: left;
+        }
+
+        .modal-btn {
+            background: var(--navy-deep);
+            color: var(--white);
+            border: none;
+            padding: 12px;
+            border-radius: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            width: 100%;
+            font-family: 'Montserrat', sans-serif;
         }
     </style>
 </head>
 <body>
 
-    <!-- Minimalist Background Accents -->
-    <div class="bg-lines"></div>
-    <div class="bg-lines right"></div>
+    <!-- Aesthetic Background Strokes & Shapes -->
+    <div class="bg-shapes-container">
+        <div class="bg-shape shape-1"></div>
+        <div class="bg-shape shape-2"></div>
+        <svg class="bg-svg-strokes" viewBox="0 0 500 800" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M-100 150 C 150 300, 200 100, 600 400" stroke="#D4AF37" stroke-width="2" stroke-dasharray="8 8"/>
+            <path d="M-50 500 C 250 400, 300 700, 550 600" stroke="#0B132B" stroke-width="2"/>
+        </svg>
+    </div>
 
-    <!-- THE DARK HERO SECTION -->
+    <!-- DARK HERO SECTION -->
     <div class="hero-section" id="hero-header">
         <div class="ticker-wrap">
             <div class="ticker-move">
@@ -415,7 +514,7 @@
     <!-- FLOATING CONTENT AREA -->
     <div class="content-wrapper">
         
-        <!-- STEP 1: HOMEPAGE -->
+        <!-- STEP 1: SELECT PLAN/CHANNEL -->
         <div id="step-1" class="panel active">
             
             <div class="floating-card">
@@ -427,10 +526,10 @@
             </div>
 
             <div class="floating-card">
-                <div class="card-pill-header">FOREX & INDICES</div>
+                <div class="card-pill-header">FOREX & CRYPTO</div>
                 <div class="card-icon">📈</div>
                 <h2 class="card-title">FX Premium Signals</h2>
-                <p class="card-desc">Curated execution on major currency pairs and global market indices.</p>
+                <p class="card-desc">Curated execution on currency pairs and crypto markets.</p>
                 <button class="card-action-btn" onclick="chooseDestination('fx', 'FX Premium Signals')">SELECT PLAN</button>
             </div>
 
@@ -443,55 +542,18 @@
             </div>
         </div>
 
-        <!-- STEP SERVICES (Expanded) -->
-        <div id="step-services" class="panel">
-            
-            <div class="service-list-item" onclick="openDirectService('Video Editing')">
-                <div class="icon">🎬</div>
-                <div class="info">
-                    <h4>Video Editing</h4>
-                    <p>High-end commercials & reels.</p>
-                </div>
-                <div class="service-action">➔</div>
-            </div>
-
-            <div class="service-list-item" onclick="openDirectService('Brand & Digital Consultancy')">
-                <div class="icon">💼</div>
-                <div class="info">
-                    <h4>Brand & Digital Consultancy</h4>
-                    <p>Executive strategy & design.</p>
-                </div>
-                <div class="service-action">➔</div>
-            </div>
-
-            <div class="service-list-item" onclick="openDirectService('Bulk SMS Money System')">
-                <div class="icon">📱</div>
-                <div class="info">
-                    <h4>Bulk SMS</h4>
-                    <p>Marketing campaigns & guides.</p>
-                </div>
-                <div class="service-action">➔</div>
-            </div>
-
-            <div class="service-list-item" onclick="openDirectService('Token Services')">
-                <div class="icon">🪙</div>
-                <div class="info">
-                    <h4>Token</h4>
-                    <p>Digital assets & Web3 solutions.</p>
-                </div>
-                <div class="service-action">➔</div>
-            </div>
-
-            <div class="nav-back" onclick="switchStep(1)">⬅️ Back to Main Menu</div>
+        <!-- STEP 2: USD SUBSCRIPTION DURATION OPTIONS -->
+        <div id="step-2" class="panel">
+            <div id="usd-plans-wrapper"></div>
+            <div class="nav-back" onclick="switchStep(1)">⬅️ Back to Signals</div>
         </div>
 
-        <!-- STEP 2: REGIONAL CURRENCY (All Paystack Supported Regions Added) -->
-        <div id="step-2" class="panel">
-            
+        <!-- STEP 3: REGIONAL CURRENCY SELECTION -->
+        <div id="step-3" class="panel">
             <div class="floating-card" style="padding-bottom: 30px;">
-                <div class="card-pill-header">STEP 1 OF 2</div>
+                <div class="card-pill-header">REGION & CURRENCY</div>
                 <h2 class="card-title">Select Region</h2>
-                <p class="card-desc" style="margin-bottom: 20px;">Choose your local region and currency for payment processing.</p>
+                <p class="card-desc" style="margin-bottom: 20px;">Choose your region to calculate exact local pricing.</p>
                 
                 <div class="regions-scroll-container">
                     <button class="region-btn" onclick="chooseCurrency('GHS', 15.50, 'GHS ')">
@@ -521,23 +583,72 @@
                 </div>
             </div>
 
-            <div class="nav-back" onclick="switchStep(1)">⬅️ Cancel</div>
+            <div class="nav-back" onclick="switchStep(2)">⬅️ Back to Durations</div>
         </div>
 
-        <!-- STEP 3: DURATION PLANS & T&C -->
-        <div id="step-3" class="panel">
-            
-            <div id="plans-wrapper"></div>
-            
-            <!-- Global Terms & Conditions Checkbox -->
-            <div class="tc-container">
-                <input type="checkbox" id="tc-checkbox">
-                <label for="tc-checkbox">
-                    I have read and agree to the <a href="#" onclick="alert('Terms & Conditions: Trading involves risk. Past performance is not indicative of future results. No refunds after access is granted.'); return false;">Terms & Conditions</a> and acknowledge the risks associated with financial trading.
-                </label>
+        <!-- STEP 4: LOCAL CURRENCY SUMMARY & CHECKOUT -->
+        <div id="step-4" class="panel">
+            <div class="floating-card">
+                <div class="card-pill-header" id="summary-plan-header">SELECTED PLAN</div>
+                <h2 class="card-title" id="summary-channel-title">VIP Terminal</h2>
+                <p class="card-desc" id="summary-duration-desc">Duration Plan Selected</p>
+                
+                <div class="price-display" id="summary-price-display">GHS 0.00</div>
+                <div class="price-sub">Total Payable In Local Currency</div>
+
+                <!-- Terms & Conditions Option -->
+                <div class="tc-container">
+                    <input type="checkbox" id="tc-checkbox" onchange="togglePayButton()">
+                    <label for="tc-checkbox">
+                        I agree to the <span class="tc-link" onclick="openTCModal()">Terms & Conditions</span>. You must tap and read terms before proceeding.
+                    </label>
+                </div>
+
+                <button id="final-pay-btn" class="card-action-btn" onclick="proceedToPaystack()" disabled>PROCEED TO PAY</button>
             </div>
 
-            <div class="nav-back" onclick="switchStep(2)">⬅️ Back to Regions</div>
+            <div class="nav-back" onclick="switchStep(3)">⬅️ Back to Regions</div>
+        </div>
+
+        <!-- STEP SERVICES -->
+        <div id="step-services" class="panel">
+            <div class="service-list-item" onclick="openDirectService('Graphic Design')">
+                <div class="icon">🎨</div>
+                <div class="info">
+                    <h4>Graphic Design</h4>
+                    <p>Logos, flyers & brand visuals.</p>
+                </div>
+                <div class="service-action">➔</div>
+            </div>
+
+            <div class="service-list-item" onclick="openDirectService('Video Editing')">
+                <div class="icon">🎬</div>
+                <div class="info">
+                    <h4>Video Editing</h4>
+                    <p>High-end commercials & reels.</p>
+                </div>
+                <div class="service-action">➔</div>
+            </div>
+
+            <div class="service-list-item" onclick="openDirectService('Bulk SMS Money System')">
+                <div class="icon">📱</div>
+                <div class="info">
+                    <h4>Bulk SMS</h4>
+                    <p>Marketing campaigns & guides.</p>
+                </div>
+                <div class="service-action">➔</div>
+            </div>
+
+            <div class="service-list-item" onclick="openDirectService('Brand & Digital Consultancy')">
+                <div class="icon">💼</div>
+                <div class="info">
+                    <h4>Brand & Digital Consultancy</h4>
+                    <p>Executive strategy & design.</p>
+                </div>
+                <div class="service-action">➔</div>
+            </div>
+
+            <div class="nav-back" onclick="switchStep(1)">⬅️ Back to Main Menu</div>
         </div>
 
         <!-- SUCCESS SCREEN -->
@@ -555,6 +666,19 @@
 
     </div>
 
+    <!-- MANDATORY TERMS & CONDITIONS MODAL -->
+    <div class="modal-overlay" id="tc-modal">
+        <div class="modal-content">
+            <div class="modal-header">Terms & Conditions</div>
+            <div class="modal-body">
+                <p><strong>1. Risk Disclosure:</strong> Financial trading involves risk. Signal performance varies, and past returns do not guarantee future outcomes.</p><br>
+                <p><strong>2. Digital Goods Policy:</strong> All access passes to VIP Telegram channels are non-refundable once activated.</p><br>
+                <p><strong>3. Usage Rights:</strong> Signals are strictly for personal use. Unauthorized distribution, copying, or reselling will result in immediate termination without refund.</p>
+            </div>
+            <button class="modal-btn" onclick="acceptAndCloseTC()">I HAVE READ AND ACCEPT</button>
+        </div>
+    </div>
+
     <script>
         const tg = window.Telegram.WebApp;
         tg.expand();
@@ -566,17 +690,22 @@
 
         let targetChannel = '';
         let targetChannelTitle = '';
+        let selectedPlan = null;
         let activeCurrency = 'GHS';
         let conversionRate = 15.50;
         let currencySymbol = 'GHS ';
+        let hasReadTC = false;
 
         const GOLD_LINK = "https://t.me/+env-Zrui2ykwYjg8"; 
         const FOREX_LINK = "https://t.me/+njii3OAHlqI3MjQ8"; 
 
         const plans = [
-            { key: '1_day_test', name: '1-Day Pass', usd: 0.01, days: 1, isTest: true },
+            { key: 'test_phase', name: 'Test Phase (10%)', usd: 0.10, days: 1, isTest: true },
             { key: '1_month', name: '1 Month Access', usd: 15, days: 30, isTest: false },
-            { key: 'lifetime', name: 'Lifetime VIP', usd: 250, days: 36500, isTest: false }
+            { key: '3_months', name: '3 Months Access', usd: 40, days: 90, isTest: false },
+            { key: '6_months', name: '6 Months Access', usd: 80, days: 180, isTest: false },
+            { key: '1_year', name: '1 Year Access', usd: 150, days: 365, isTest: false },
+            { key: 'lifetime', name: 'Lifetime VIP', usd: 700, days: 36500, isTest: false }
         ];
 
         function switchStep(stepVal) {
@@ -585,8 +714,9 @@
             
             const subTitle = document.getElementById('header-subtitle');
             if(stepVal === 1) subTitle.innerText = "Select your plan for precision trading and institutional insights.";
-            if(stepVal === 2) subTitle.innerText = "Choose your preferred payment region and currency.";
-            if(stepVal === 3) subTitle.innerText = `Select a duration for ${targetChannelTitle}.`;
+            if(stepVal === 2) subTitle.innerText = "Select a subscription duration plan.";
+            if(stepVal === 3) subTitle.innerText = "Choose your region to compute local currency.";
+            if(stepVal === 4) subTitle.innerText = "Review total payable and accept terms to check out.";
             if(stepVal === 'services') subTitle.innerText = "Explore our premium digital agency and consultancy services.";
             
             window.scrollTo(0, 0);
@@ -595,7 +725,30 @@
         function chooseDestination(key, title) {
             targetChannel = key;
             targetChannelTitle = title;
+            buildUSDPlansUI();
             switchStep(2);
+        }
+
+        function buildUSDPlansUI() {
+            const wrapper = document.getElementById('usd-plans-wrapper');
+            wrapper.innerHTML = '';
+
+            plans.forEach(plan => {
+                const card = document.createElement('div');
+                card.className = 'floating-card';
+                card.innerHTML = `
+                    <div class="card-pill-header">${plan.name}</div>
+                    <div class="price-display">$${plan.usd.toFixed(2)}</div>
+                    <div class="price-sub">USD Standard Plan</div>
+                    <button class="card-action-btn" onclick="selectUSDPlan('${plan.key}')">SELECT DURATION</button>
+                `;
+                wrapper.appendChild(card);
+            });
+        }
+
+        function selectUSDPlan(planKey) {
+            selectedPlan = plans.find(p => p.key === planKey);
+            switchStep(3);
         }
 
         function openDirectService(serviceName) {
@@ -608,56 +761,58 @@
             conversionRate = rate;
             currencySymbol = symbol;
             
-            document.getElementById('tc-checkbox').checked = false;
+            // Prepare Step 4 Local Currency Summary
+            document.getElementById('summary-plan-header').innerText = selectedPlan.name;
+            document.getElementById('summary-channel-title').innerText = targetChannelTitle;
+            document.getElementById('summary-duration-desc').innerText = `Subscription Duration: ${selectedPlan.days} Days`;
             
-            buildPlansUI();
-            switchStep(3);
+            let totalLocal = selectedPlan.usd * conversionRate;
+            let priceText = totalLocal.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2});
+            document.getElementById('summary-price-display').innerText = `${currencySymbol}${priceText}`;
+
+            // Reset T&C Check
+            document.getElementById('tc-checkbox').checked = false;
+            document.getElementById('final-pay-btn').disabled = true;
+
+            switchStep(4);
         }
 
-        function buildPlansUI() {
-            const wrapper = document.getElementById('plans-wrapper');
-            wrapper.innerHTML = '';
-
-            plans.forEach(plan => {
-                let priceText = '';
-                let amountInSubunits = 0;
-
-                if (plan.isTest) {
-                    priceText = '0.10';
-                    amountInSubunits = 10;
-                } else {
-                    const total = plan.usd * conversionRate;
-                    priceText = total.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2});
-                    amountInSubunits = Math.round(total * 100);
-                }
-
-                const card = document.createElement('div');
-                card.className = 'floating-card';
-                card.innerHTML = `
-                    <div class="card-pill-header">${plan.name}</div>
-                    <div class="price-display">${currencySymbol}${priceText}</div>
-                    <div class="price-sub">Total Payable</div>
-                    <button class="card-action-btn" onclick="validateAndPay(${amountInSubunits}, ${plan.days})">PAY NOW</button>
-                `;
-                wrapper.appendChild(card);
-            });
+        function openTCModal() {
+            document.getElementById('tc-modal').style.display = 'flex';
         }
 
-        function validateAndPay(amountSubunits, days) {
-            const isChecked = document.getElementById('tc-checkbox').checked;
-            if (!isChecked) {
-                if (tg.showAlert) {
-                    tg.showAlert("Please agree to the Terms & Conditions before proceeding.");
-                } else {
-                    alert("Please agree to the Terms & Conditions before proceeding.");
-                }
+        function acceptAndCloseTC() {
+            hasReadTC = true;
+            document.getElementById('tc-modal').style.display = 'none';
+            document.getElementById('tc-checkbox').checked = true;
+            togglePayButton();
+        }
+
+        function togglePayButton() {
+            const checkbox = document.getElementById('tc-checkbox');
+            const payBtn = document.getElementById('final-pay-btn');
+            
+            if (!hasReadTC && checkbox.checked) {
+                checkbox.checked = false;
+                openTCModal();
                 return;
             }
-            triggerPaystack(amountSubunits, days);
+            payBtn.disabled = !checkbox.checked;
+        }
+
+        function proceedToPaystack() {
+            const isChecked = document.getElementById('tc-checkbox').checked;
+            if (!isChecked || !hasReadTC) {
+                alert("You must read and agree to the Terms & Conditions first.");
+                return;
+            }
+
+            let amountInSubunits = Math.round(selectedPlan.usd * conversionRate * 100);
+            triggerPaystack(amountInSubunits, selectedPlan.days);
         }
 
         function triggerPaystack(amountSubunits, days) {
-            const user = tg.initDataUnsafe.user;
+            const user = tg.initDataUnsafe ? tg.initDataUnsafe.user : null;
             const userEmail = user ? `user_${user.id}@jayempire.com` : 'client@jayempire.com';
 
             let handler = PaystackPop.setup({
