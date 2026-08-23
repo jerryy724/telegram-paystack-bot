@@ -22,12 +22,12 @@ GOLD_PRIMARY_LINK = "https://t.me/+env-Zrui2ykwYjg8"
 FOREX_PRIMARY_LINK = "https://t.me/+njii3OAHlqI3MjQ8"
 
 # ==============================================================================
-# MONGODB CONNECTION (Optimized with Timeout)
+# MONGODB CONNECTION (Fixed TLS/SSL Handshake)
 # ==============================================================================
 mongo_client = MongoClient(
     MONGO_URI,
+    tls=True,
     tlsCAFile=certifi.where(),
-    tlsAllowInvalidCertificates=True,
     serverSelectionTimeoutMS=5000  # Prevents bot from freezing if DB is slow
 )
 db = mongo_client["jay_empire_db"]
@@ -43,7 +43,6 @@ telegram_app = Application.builder().token(BOT_TOKEN).build()
 async def start_cmd(update: Update, context):
     user = update.effective_user
     if user:
-        # Wrap in try/except so a database hang DOES NOT stop the bot from replying
         try:
             leads_col.update_one(
                 {"telegram_id": user.id},
@@ -61,7 +60,6 @@ async def start_cmd(update: Update, context):
         except Exception as e:
             print(f"Lead Logging Error: {e}")
 
-    # The bot will instantly send this regardless of DB status
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("👑 Launch VIP Terminal App", web_app=WebAppInfo(url=MINI_APP_URL))]
     ])
@@ -80,7 +78,6 @@ async def check_expirations_and_leads():
     bot = Bot(token=BOT_TOKEN)
     now = datetime.utcnow()
     
-    # 1. Prospective Lead Follow-up Reminder (48 Hours After /start)
     lead_cutoff = now - timedelta(hours=48)
     try:
         unconverted_leads = leads_col.find({
@@ -110,7 +107,6 @@ async def check_expirations_and_leads():
     except Exception as e:
         print(f"DB Error checking leads: {e}")
 
-    # 2. VIP 3-Day Renewal Reminder
     reminder_target = now + timedelta(days=3)
     try:
         expiring_soon = users_col.find({
@@ -131,7 +127,6 @@ async def check_expirations_and_leads():
     except Exception as e:
         print(f"DB Error checking renewals: {e}")
 
-    # 3. Deactivate Expired VIP Subscriptions
     try:
         expired_users = users_col.find({
             "is_active": True,
@@ -152,7 +147,7 @@ async def check_expirations_and_leads():
 async def scheduler_loop():
     while True:
         await check_expirations_and_leads()
-        await asyncio.sleep(86400) # Runs daily check
+        await asyncio.sleep(86400) 
 
 # ==============================================================================
 # FASTAPI LIFESPAN MANAGER
@@ -162,7 +157,6 @@ async def lifespan(app: FastAPI):
     await telegram_app.initialize()
     await telegram_app.start()
     
-    # Configure Webhook automatically on startup (Removed drop_pending_updates)
     webhook_target = f"{RENDER_URL.rstrip('/')}/telegram-webhook"
     bot = Bot(token=BOT_TOKEN)
     await bot.set_webhook(url=webhook_target)
