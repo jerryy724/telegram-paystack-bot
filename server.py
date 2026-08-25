@@ -1,5 +1,6 @@
 import os
 import asyncio
+import certifi
 from datetime import datetime, timedelta
 from fastapi import FastAPI, Request
 from contextlib import asynccontextmanager
@@ -21,13 +22,13 @@ GOLD_PRIMARY_LINK = "https://t.me/+env-Zrui2ykwYjg8"
 FOREX_PRIMARY_LINK = "https://t.me/+njii3OAHlqI3MjQ8"
 
 # ==============================================================================
-# MONGODB CONNECTION (Handshake Bypass Applied)
+# MONGODB CONNECTION (Official Render-Atlas Handshake)
 # ==============================================================================
-# tlsAllowInvalidCertificates=True forces the connection to bypass the Render TLS block
+# tlsCAFile=certifi.where() provides the explicit root certificates Render is missing
 mongo_client = MongoClient(
     MONGO_URI,
     tls=True,
-    tlsAllowInvalidCertificates=True, 
+    tlsCAFile=certifi.where(),
     serverSelectionTimeoutMS=10000,
     connectTimeoutMS=10000
 )
