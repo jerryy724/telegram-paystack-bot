@@ -1,5 +1,4 @@
 import os
-import certifi
 import asyncio
 from datetime import datetime, timedelta
 from fastapi import FastAPI, Request
@@ -22,13 +21,15 @@ GOLD_PRIMARY_LINK = "https://t.me/+env-Zrui2ykwYjg8"
 FOREX_PRIMARY_LINK = "https://t.me/+njii3OAHlqI3MjQ8"
 
 # ==============================================================================
-# MONGODB CONNECTION (Fixed TLS/SSL Handshake)
+# MONGODB CONNECTION (Handshake Bypass Applied)
 # ==============================================================================
+# tlsAllowInvalidCertificates=True forces the connection to bypass the Render TLS block
 mongo_client = MongoClient(
     MONGO_URI,
     tls=True,
-    tlsCAFile=certifi.where(),
-    serverSelectionTimeoutMS=5000  # Prevents bot from freezing if DB is slow
+    tlsAllowInvalidCertificates=True, 
+    serverSelectionTimeoutMS=10000,
+    connectTimeoutMS=10000
 )
 db = mongo_client["jay_empire_db"]
 users_col = db["vip_users"]
