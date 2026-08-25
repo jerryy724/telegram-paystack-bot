@@ -2,4 +2,4 @@ fastapi
 uvicorn
 httpx
 python-telegram-bot
-apscheduler
+pymongo
