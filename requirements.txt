@@ -2,7 +2,4 @@ fastapi
 uvicorn
 httpx
 python-telegram-bot
-pymongo[srv]
-dnspython
 apscheduler
-certifi
