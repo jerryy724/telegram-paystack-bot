@@ -3,3 +3,6 @@ uvicorn
 httpx
 python-telegram-bot
 pymongo
+dnspython
+certifi
+apscheduler
