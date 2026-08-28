@@ -2,165 +2,226 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Jay Empire VIP Terminal</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Jay Empire VIP</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <script src="https://js.paystack.co/v1/inline.js"></script>
     
-    <!-- Premium Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Montserrat:wght@500;600;700;800&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
     
     <style>
         :root {
-            /* Jay Empire Classic Premium Palette */
-            --navy-deep: #0B132B;
-            --navy-light: #1C2541;
-            --gold-primary: #D4AF37;
-            --bg-light: #F4F6F9;
-            --white: #FFFFFF;
-            --text-dark: #1A1A1A;
-            --text-muted: #6B7280;
-            --border-light: #E5E7EB;
-            --floating-shadow: 0 16px 32px rgba(11, 19, 43, 0.08);
+            --ink: #0a0e1a;
+            --ink-light: #131b2e;
+            --ink-glow: #1a2540;
+            --gold: #c9a227;
+            --gold-light: #e8d5a3;
+            --gold-dark: #a88420;
+            --surface: #f8f9fb;
+            --surface-elevated: #ffffff;
+            --text-primary: #0f172a;
+            --text-secondary: #64748b;
+            --text-muted: #94a3b8;
+            --success: #10b981;
+            --error: #ef4444;
+            --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+            --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+            --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+            --shadow-xl: 0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1);
+            --shadow-gold: 0 0 40px -10px rgba(201, 162, 39, 0.3);
+            --radius-sm: 12px;
+            --radius-md: 16px;
+            --radius-lg: 24px;
+            --radius-xl: 32px;
         }
 
         * {
-            box-sizing: border-box;
-            -webkit-tap-highlight-color: transparent;
             margin: 0;
             padding: 0;
+            box-sizing: border-box;
+            -webkit-tap-highlight-color: transparent;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        html {
+            scroll-behavior: smooth;
         }
 
         body {
             font-family: 'Inter', sans-serif;
-            background-color: var(--bg-light);
-            color: var(--text-dark);
+            background: var(--surface);
+            color: var(--text-primary);
             min-height: 100vh;
             overflow-x: hidden;
-            position: relative;
-            display: flex;
-            flex-direction: column;
+            line-height: 1.5;
         }
 
-        h1, h2, h3, .card-title, .brand-title {
-            font-family: 'Montserrat', sans-serif;
+        h1, h2, h3, .brand-title, .price-tag {
+            font-family: 'Space Grotesk', sans-serif;
+            font-weight: 700;
+            letter-spacing: -0.02em;
         }
 
-        /* BACKGROUND AESTHETICS & SHAPES */
-        .bg-shapes-container {
+        /* ===== ANIMATED BACKGROUND ===== */
+        .bg-canvas {
             position: fixed;
-            top: 0;
-            left: 0;
-            width: 100vw;
-            height: 100vh;
-            z-index: -1;
-            overflow: hidden;
-            pointer-events: none;
-        }
-
-        .bg-shape {
-            position: absolute;
-            border-radius: 50%;
-            filter: blur(40px);
-            opacity: 0.25;
-        }
-
-        .shape-1 {
-            top: -50px;
-            right: -50px;
-            width: 250px;
-            height: 250px;
-            background: var(--gold-primary);
-        }
-
-        .shape-2 {
-            bottom: 10%;
-            left: -80px;
-            width: 300px;
-            height: 300px;
-            background: var(--navy-light);
-        }
-
-        .bg-svg-strokes {
-            position: absolute;
             top: 0;
             left: 0;
             width: 100%;
             height: 100%;
-            opacity: 0.12;
+            z-index: 0;
+            pointer-events: none;
+            overflow: hidden;
         }
 
-        /* HERO SECTION */
-        .hero-section {
-            background: var(--navy-deep);
-            background-image: radial-gradient(circle at top right, var(--navy-light) 0%, transparent 70%);
-            padding: 25px 20px 100px 20px; 
+        .bg-gradient {
+            position: absolute;
+            inset: 0;
+            background: 
+                radial-gradient(ellipse 80% 50% at 50% -20%, rgba(201, 162, 39, 0.08), transparent),
+                radial-gradient(ellipse 60% 40% at 80% 100%, rgba(19, 27, 46, 0.06), transparent);
+        }
+
+        .particle {
+            position: absolute;
+            width: 3px;
+            height: 3px;
+            background: var(--gold);
+            border-radius: 50%;
+            opacity: 0;
+            animation: float-up 8s ease-in infinite;
+        }
+
+        @keyframes float-up {
+            0% { transform: translateY(100vh) scale(0); opacity: 0; }
+            10% { opacity: 0.6; }
+            90% { opacity: 0.6; }
+            100% { transform: translateY(-10vh) scale(1); opacity: 0; }
+        }
+
+        /* ===== HERO ===== */
+        .hero {
+            position: relative;
+            z-index: 1;
+            background: linear-gradient(165deg, var(--ink) 0%, var(--ink-light) 60%, var(--ink-glow) 100%);
+            padding: 28px 20px 100px;
+            border-radius: 0 0 var(--radius-xl) var(--radius-xl);
+            overflow: hidden;
+        }
+
+        .hero::before {
+            content: '';
+            position: absolute;
+            top: -50%;
+            right: -30%;
+            width: 400px;
+            height: 400px;
+            background: radial-gradient(circle, rgba(201, 162, 39, 0.15) 0%, transparent 70%);
+            pointer-events: none;
+        }
+
+        .hero::after {
+            content: '';
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 1px;
+            background: linear-gradient(90deg, transparent, rgba(201, 162, 39, 0.3), transparent);
+        }
+
+        .ticker {
+            background: rgba(255,255,255,0.03);
+            border: 1px solid rgba(201, 162, 39, 0.12);
+            border-radius: 100px;
+            padding: 8px 16px;
+            margin-bottom: 24px;
+            overflow: hidden;
+            white-space: nowrap;
+        }
+
+        .ticker-track {
+            display: inline-flex;
+            animation: ticker-scroll 20s linear infinite;
+            gap: 32px;
+        }
+
+        .ticker-item {
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--gold-light);
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        @keyframes ticker-scroll {
+            0% { transform: translateX(0); }
+            100% { transform: translateX(-50%); }
+        }
+
+        .hero-content {
             text-align: center;
-            border-bottom-left-radius: 35px;
-            border-bottom-right-radius: 35px;
             position: relative;
         }
 
-        .ticker-wrap {
-            background: rgba(255, 255, 255, 0.03);
-            border: 1px solid rgba(212, 175, 55, 0.15);
-            border-radius: 20px;
-            overflow: hidden;
-            white-space: nowrap;
-            padding: 6px 0;
-            margin-bottom: 28px;
+        .brand-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            background: rgba(201, 162, 39, 0.1);
+            border: 1px solid rgba(201, 162, 39, 0.2);
+            padding: 6px 14px;
+            border-radius: 100px;
+            margin-bottom: 16px;
         }
 
-        .ticker-move {
-            display: inline-block;
-            animation: ticker 25s linear infinite;
-            font-size: 10px;
+        .brand-badge span {
+            font-size: 11px;
             font-weight: 600;
-            color: var(--gold-primary);
-            letter-spacing: 1px;
+            color: var(--gold);
             text-transform: uppercase;
-        }
-
-        @keyframes ticker {
-            0% { transform: translate3d(0, 0, 0); }
-            100% { transform: translate3d(-50%, 0, 0); }
-        }
-
-        .brand-header {
-            color: var(--white);
+            letter-spacing: 0.08em;
         }
 
         .brand-title {
-            font-size: 28px;
-            font-weight: 800;
-            margin-bottom: 8px;
-            letter-spacing: -0.5px;
+            font-size: 36px;
+            color: #fff;
+            line-height: 1.1;
+            margin-bottom: 10px;
+            background: linear-gradient(135deg, #fff 0%, var(--gold-light) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
         }
 
-        .brand-sub {
+        .brand-subtitle {
             font-size: 14px;
-            color: #A0AABF;
-            font-weight: 400;
-            max-width: 300px;
+            color: rgba(255,255,255,0.5);
+            max-width: 280px;
             margin: 0 auto;
-            line-height: 1.5;
+            line-height: 1.6;
+            font-weight: 400;
         }
 
-        /* MAIN CONTENT AREA */
-        .content-wrapper {
-            padding: 0 20px 20px 20px;
-            margin-top: -65px; 
-            flex: 1;
+        /* ===== CONTENT ===== */
+        .content {
+            position: relative;
+            z-index: 2;
+            padding: 0 16px 24px;
+            margin-top: -60px;
         }
 
-        /* PANELS */
+        /* ===== PANELS ===== */
         .panel {
             display: none;
             opacity: 0;
-            transform: translateY(10px);
-            transition: all 0.4s ease;
+            transform: translateY(16px);
+            transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
         }
 
         .panel.active {
@@ -169,589 +230,798 @@
             transform: translateY(0);
         }
 
-        /* FLOATING CARDS */
-        .floating-card {
-            background: rgba(255, 255, 255, 0.95);
-            backdrop-filter: blur(10px);
-            border-radius: 20px;
-            padding: 35px 25px 45px 25px; 
-            margin-bottom: 35px; 
-            text-align: center;
-            box-shadow: var(--floating-shadow);
+        /* ===== GLASS CARDS ===== */
+        .glass-card {
+            background: rgba(255,255,255,0.85);
+            backdrop-filter: blur(20px) saturate(180%);
+            -webkit-backdrop-filter: blur(20px) saturate(180%);
+            border-radius: var(--radius-lg);
+            padding: 32px 24px;
+            margin-bottom: 20px;
+            border: 1px solid rgba(255,255,255,0.6);
+            box-shadow: var(--shadow-xl), 0 0 0 1px rgba(0,0,0,0.02);
             position: relative;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            border: 1px solid rgba(255,255,255,0.8);
+            overflow: hidden;
         }
 
-        .card-pill-header {
-            background: var(--navy-deep);
-            color: var(--white);
+        .glass-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 1px;
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.8), transparent);
+        }
+
+        .card-eyebrow {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            background: var(--ink);
+            color: var(--gold);
             font-size: 10px;
             font-weight: 700;
             text-transform: uppercase;
-            letter-spacing: 1.5px;
-            padding: 8px 20px;
-            border-radius: 30px;
+            letter-spacing: 0.12em;
+            padding: 6px 14px;
+            border-radius: 100px;
             margin-bottom: 20px;
-            box-shadow: 0 4px 10px rgba(11, 19, 43, 0.15);
         }
 
         .card-icon {
-            font-size: 36px;
-            margin-bottom: 15px;
+            width: 64px;
+            height: 64px;
+            background: linear-gradient(135deg, var(--ink-light), var(--ink-glow));
+            border-radius: var(--radius-md);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 28px;
+            margin-bottom: 20px;
+            box-shadow: 0 8px 24px rgba(10, 14, 26, 0.15);
         }
 
         .card-title {
-            font-size: 22px;
-            color: var(--navy-deep);
-            margin-bottom: 10px;
-            font-weight: 700;
+            font-size: 24px;
+            color: var(--text-primary);
+            margin-bottom: 8px;
+            line-height: 1.2;
         }
 
         .card-desc {
             font-size: 14px;
-            color: var(--text-muted);
+            color: var(--text-secondary);
             line-height: 1.6;
-            margin-bottom: 10px;
+            margin-bottom: 24px;
         }
 
-        /* UNIFORM ACTION BUTTONS */
-        .card-action-btn {
+        /* ===== PREMIUM HIGHLIGHT ===== */
+        .glass-card.premium {
+            border: 1px solid rgba(201, 162, 39, 0.2);
+            box-shadow: var(--shadow-xl), var(--shadow-gold);
+        }
+
+        .glass-card.premium::after {
+            content: '';
             position: absolute;
-            bottom: -22px; 
-            background: var(--gold-primary);
-            color: var(--navy-deep);
+            top: -1px;
+            left: 20%;
+            right: 20%;
+            height: 2px;
+            background: linear-gradient(90deg, transparent, var(--gold), transparent);
+            border-radius: 2px;
+        }
+
+        .premium-badge {
+            position: absolute;
+            top: 16px;
+            right: 16px;
+            background: linear-gradient(135deg, var(--gold), var(--gold-dark));
+            color: var(--ink);
+            font-size: 10px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            padding: 4px 10px;
+            border-radius: 100px;
+        }
+
+        /* ===== BUTTONS ===== */
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            width: 100%;
+            padding: 16px 24px;
+            border-radius: 100px;
             border: none;
-            font-family: 'Montserrat', sans-serif;
+            font-family: 'Space Grotesk', sans-serif;
             font-size: 14px;
             font-weight: 700;
-            padding: 15px 40px;
-            border-radius: 30px;
             text-transform: uppercase;
-            letter-spacing: 1px;
+            letter-spacing: 0.06em;
             cursor: pointer;
-            box-shadow: 0 8px 20px rgba(212, 175, 55, 0.3);
-            transition: transform 0.2s ease, box-shadow 0.2s ease;
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
         }
 
-        .card-action-btn:disabled {
-            background: #D1D5DB;
-            color: #9CA3AF;
+        .btn-primary {
+            background: linear-gradient(135deg, var(--gold) 0%, var(--gold-dark) 100%);
+            color: var(--ink);
+            box-shadow: 0 4px 16px rgba(201, 162, 39, 0.3), inset 0 1px 0 rgba(255,255,255,0.2);
+        }
+
+        .btn-primary:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 24px rgba(201, 162, 39, 0.4), inset 0 1px 0 rgba(255,255,255,0.2);
+        }
+
+        .btn-primary:active:not(:disabled) {
+            transform: translateY(0);
+        }
+
+        .btn-primary:disabled {
+            background: #e2e8f0;
+            color: #94a3b8;
             box-shadow: none;
             cursor: not-allowed;
         }
 
-        .card-action-btn:active:not(:disabled) {
-            transform: scale(0.96);
-            box-shadow: 0 4px 10px rgba(212, 175, 55, 0.2);
+        .btn-secondary {
+            background: transparent;
+            color: var(--ink);
+            border: 2px solid var(--ink);
         }
 
-        /* SLEEK SERVICES BANNER */
-        .services-banner {
-            background: rgba(255, 255, 255, 0.9);
-            border-radius: 16px;
-            padding: 20px;
+        .btn-secondary:hover {
+            background: var(--ink);
+            color: #fff;
+        }
+
+        .btn-shimmer::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.3), transparent);
+            animation: shimmer 2s infinite;
+        }
+
+        @keyframes shimmer {
+            0% { left: -100%; }
+            100% { left: 100%; }
+        }
+
+        /* ===== PRICE DISPLAY ===== */
+        .price-block {
             text-align: center;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.04);
-            margin-bottom: 30px;
-            border: 1px solid var(--border-light);
+            margin: 20px 0;
+        }
+
+        .price-tag {
+            font-size: 42px;
+            color: var(--text-primary);
+            line-height: 1;
+            margin-bottom: 4px;
+        }
+
+        .price-tag .currency {
+            font-size: 20px;
+            vertical-align: super;
+            font-weight: 500;
+            color: var(--text-secondary);
+        }
+
+        .price-original {
+            font-size: 14px;
+            color: var(--text-muted);
+            text-decoration: line-through;
+            margin-bottom: 4px;
+        }
+
+        .price-label {
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: var(--text-muted);
+        }
+
+        /* ===== SERVICES BANNER ===== */
+        .services-banner {
+            background: var(--surface-elevated);
+            border-radius: var(--radius-md);
+            padding: 20px;
             display: flex;
             align-items: center;
             justify-content: space-between;
-        }
-
-        .services-text {
-            text-align: left;
+            box-shadow: var(--shadow-md);
+            margin-bottom: 20px;
+            border: 1px solid rgba(0,0,0,0.04);
         }
 
         .services-banner h3 {
-            color: var(--navy-deep);
             font-size: 15px;
-            margin-bottom: 4px;
+            color: var(--text-primary);
+            margin-bottom: 2px;
         }
-        
+
         .services-banner p {
-            font-size: 12px;
-            color: var(--text-muted);
+            font-size: 13px;
+            color: var(--text-secondary);
         }
 
-        .services-btn {
-            background: transparent;
-            color: var(--navy-deep);
-            border: 2px solid var(--navy-deep);
-            font-family: 'Montserrat', sans-serif;
-            font-size: 12px;
-            font-weight: 700;
-            padding: 10px 18px;
-            border-radius: 20px;
-            cursor: pointer;
-            text-transform: uppercase;
-        }
-
-        /* SERVICES GRID */
-        .service-list-item {
-            background: rgba(255, 255, 255, 0.95);
-            border-radius: 16px;
-            padding: 20px;
-            margin-bottom: 15px;
+        /* ===== SERVICE LIST ===== */
+        .service-item {
+            background: var(--surface-elevated);
+            border-radius: var(--radius-md);
+            padding: 16px;
+            margin-bottom: 12px;
             display: flex;
             align-items: center;
-            box-shadow: 0 4px 10px rgba(0,0,0,0.03);
-            border: 1px solid var(--border-light);
+            gap: 16px;
+            box-shadow: var(--shadow-sm);
+            border: 1px solid rgba(0,0,0,0.03);
             cursor: pointer;
+            transition: all 0.2s ease;
         }
 
-        .service-list-item .icon {
-            font-size: 24px;
-            margin-right: 15px;
-            background: var(--bg-light);
-            width: 50px;
-            height: 50px;
+        .service-item:hover {
+            box-shadow: var(--shadow-md);
+            transform: translateX(4px);
+        }
+
+        .service-icon {
+            width: 48px;
+            height: 48px;
+            background: linear-gradient(135deg, var(--surface), #f1f5f9);
+            border-radius: var(--radius-sm);
             display: flex;
             align-items: center;
             justify-content: center;
-            border-radius: 12px;
+            font-size: 22px;
+            flex-shrink: 0;
         }
 
-        .service-list-item .info h4 {
-            color: var(--navy-deep);
+        .service-info h4 {
             font-size: 15px;
-            margin-bottom: 4px;
+            color: var(--text-primary);
+            margin-bottom: 2px;
+            font-weight: 600;
         }
 
-        .service-list-item .info p {
-            font-size: 12px;
-            color: var(--text-muted);
+        .service-info p {
+            font-size: 13px;
+            color: var(--text-secondary);
         }
 
-        .service-action {
+        .service-arrow {
             margin-left: auto;
-            color: var(--gold-primary);
-            font-size: 20px;
+            color: var(--gold);
+            font-size: 18px;
+            transition: transform 0.2s;
         }
 
-        /* REGION LIST CONTAINER */
-        .regions-scroll-container {
-            max-height: 280px;
-            overflow-y: auto;
-            width: 100%;
-            margin-bottom: 10px;
-            padding-right: 4px;
+        .service-item:hover .service-arrow {
+            transform: translateX(4px);
+        }
+
+        /* ===== REGION BUTTONS ===== */
+        .region-grid {
+            display: grid;
+            gap: 10px;
         }
 
         .region-btn {
-            background: var(--bg-light);
-            color: var(--navy-deep);
-            border: 1px solid var(--border-light);
-            font-family: 'Montserrat', sans-serif;
-            font-size: 13px;
-            font-weight: 600;
-            padding: 14px 16px;
-            border-radius: 14px;
-            margin-bottom: 10px;
-            cursor: pointer;
-            width: 100%;
             display: flex;
             align-items: center;
-            justify-content: flex-start;
-            transition: background 0.2s, border-color 0.2s;
-        }
-
-        .region-btn:hover {
-            border-color: var(--gold-primary);
-            background: #FFF;
-        }
-
-        .region-btn span {
-            font-size: 20px;
-            margin-right: 12px;
-        }
-
-        /* PRICING SPECIFIC DISPLAY */
-        .price-display {
-            font-family: 'Montserrat', sans-serif;
-            font-size: 34px;
-            font-weight: 800;
-            color: var(--text-dark);
-            margin: 12px 0;
-            letter-spacing: -1px;
-        }
-
-        .price-sub {
-            font-size: 12px;
-            color: var(--text-muted);
-            text-transform: uppercase;
-            letter-spacing: 1px;
+            gap: 12px;
+            background: var(--surface-elevated);
+            border: 1px solid rgba(0,0,0,0.06);
+            border-radius: var(--radius-md);
+            padding: 14px 16px;
+            font-family: 'Inter', sans-serif;
+            font-size: 14px;
             font-weight: 500;
-        }
-
-        /* TERMS AND CONDITIONS */
-        .tc-container {
-            background: #E5E7EB;
-            border-radius: 12px;
-            padding: 15px;
-            margin: 20px 0 30px 0;
-            display: flex;
-            align-items: flex-start;
+            color: var(--text-primary);
+            cursor: pointer;
+            transition: all 0.2s ease;
             text-align: left;
         }
 
-        .tc-container input[type="checkbox"] {
-            margin-top: 4px;
-            margin-right: 12px;
-            width: 18px;
-            height: 18px;
-            accent-color: var(--navy-deep);
+        .region-btn:hover {
+            border-color: var(--gold);
+            background: linear-gradient(135deg, #fff, rgba(201, 162, 39, 0.03));
+            box-shadow: var(--shadow-md);
         }
 
-        .tc-container label {
+        .region-flag {
+            font-size: 22px;
+            width: 32px;
+            text-align: center;
+        }
+
+        .region-name {
+            flex: 1;
+        }
+
+        .region-currency {
             font-size: 12px;
-            color: var(--text-dark);
-            line-height: 1.5;
+            color: var(--text-muted);
+            font-weight: 400;
         }
 
-        .tc-link {
-            color: var(--navy-deep);
-            font-weight: 700;
-            text-decoration: underline;
+        /* ===== TERMS ===== */
+        .terms-box {
+            background: #f1f5f9;
+            border-radius: var(--radius-sm);
+            padding: 16px;
+            margin: 20px 0;
+            display: flex;
+            gap: 12px;
+            align-items: flex-start;
+        }
+
+        .terms-box input[type="checkbox"] {
+            width: 20px;
+            height: 20px;
+            accent-color: var(--ink);
+            margin-top: 2px;
+            flex-shrink: 0;
             cursor: pointer;
         }
 
-        /* BACK NAVIGATION */
-        .nav-back {
-            display: block;
-            text-align: center;
-            color: var(--text-muted);
+        .terms-box label {
+            font-size: 13px;
+            color: var(--text-secondary);
+            line-height: 1.5;
+            cursor: pointer;
+        }
+
+        .terms-box a {
+            color: var(--ink);
+            font-weight: 600;
+            text-decoration: underline;
+            text-underline-offset: 2px;
+        }
+
+        /* ===== BACK LINK ===== */
+        .back-link {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            color: var(--text-secondary);
             font-size: 14px;
             font-weight: 500;
-            margin: 20px auto 10px auto;
             text-decoration: none;
+            margin: 16px auto;
             cursor: pointer;
+            transition: color 0.2s;
         }
 
-        /* CONTACT ADMIN SECTION */
-        .contact-admin-wrapper {
+        .back-link:hover {
+            color: var(--text-primary);
+        }
+
+        /* ===== CONTACT ===== */
+        .contact-bar {
             text-align: center;
-            margin: 15px 0 25px 0;
+            padding: 16px;
             font-size: 13px;
             color: var(--text-muted);
-            font-weight: 500;
         }
 
-        .contact-admin-link {
-            color: #2563EB;
-            font-weight: 700;
-            text-decoration: underline;
-            cursor: pointer;
+        .contact-bar a {
+            color: var(--ink);
+            font-weight: 600;
+            text-decoration: none;
         }
 
-        /* FOOTER */
+        /* ===== FOOTER ===== */
         .app-footer {
             text-align: center;
             padding: 20px;
-            font-family: 'Montserrat', sans-serif;
-            font-size: 12px;
-            font-weight: 700;
-            color: var(--navy-deep);
-            letter-spacing: 0.5px;
+            font-size: 11px;
+            font-weight: 600;
             text-transform: uppercase;
-            border-top: 1px solid rgba(0, 0, 0, 0.05);
-            background: rgba(255, 255, 255, 0.5);
-            backdrop-filter: blur(5px);
+            letter-spacing: 0.1em;
+            color: var(--text-muted);
+            border-top: 1px solid rgba(0,0,0,0.04);
         }
 
-        /* MODAL FOR MANDATORY READ TERMS */
+        /* ===== MODAL ===== */
         .modal-overlay {
             display: none;
             position: fixed;
-            top: 0;
-            left: 0;
-            width: 100vw;
-            height: 100vh;
-            background: rgba(11, 19, 43, 0.7);
+            inset: 0;
+            background: rgba(10, 14, 26, 0.7);
+            backdrop-filter: blur(8px);
             z-index: 1000;
             align-items: center;
             justify-content: center;
             padding: 20px;
+            opacity: 0;
+            transition: opacity 0.3s ease;
         }
 
-        .modal-content {
-            background: var(--white);
-            border-radius: 20px;
-            padding: 25px;
+        .modal-overlay.show {
+            display: flex;
+            opacity: 1;
+        }
+
+        .modal-box {
+            background: var(--surface-elevated);
+            border-radius: var(--radius-lg);
+            padding: 28px;
             max-width: 400px;
             width: 100%;
             max-height: 80vh;
-            display: flex;
-            flex-direction: column;
-            box-shadow: var(--floating-shadow);
+            box-shadow: var(--shadow-xl);
+            transform: scale(0.95);
+            transition: transform 0.3s ease;
         }
 
-        .modal-header {
-            font-family: 'Montserrat', sans-serif;
-            font-size: 18px;
+        .modal-overlay.show .modal-box {
+            transform: scale(1);
+        }
+
+        .modal-title {
+            font-family: 'Space Grotesk', sans-serif;
+            font-size: 20px;
             font-weight: 700;
-            color: var(--navy-deep);
-            margin-bottom: 12px;
+            color: var(--text-primary);
+            margin-bottom: 16px;
         }
 
         .modal-body {
             font-size: 13px;
-            color: var(--text-muted);
-            line-height: 1.6;
+            color: var(--text-secondary);
+            line-height: 1.7;
             overflow-y: auto;
-            margin-bottom: 20px;
+            max-height: 50vh;
             padding-right: 8px;
-            text-align: left;
+            margin-bottom: 20px;
         }
 
-        .modal-btn {
-            background: var(--navy-deep);
-            color: var(--white);
-            border: none;
-            padding: 12px;
-            border-radius: 12px;
-            font-weight: 600;
-            cursor: pointer;
-            width: 100%;
-            font-family: 'Montserrat', sans-serif;
+        .modal-body p {
+            margin-bottom: 12px;
+        }
+
+        .modal-body strong {
+            color: var(--text-primary);
+        }
+
+        /* ===== SUCCESS SCREEN ===== */
+        .success-ring {
+            width: 80px;
+            height: 80px;
+            background: linear-gradient(135deg, var(--success), #059669);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 36px;
+            margin: 0 auto 20px;
+            box-shadow: 0 8px 24px rgba(16, 185, 129, 0.3);
+            animation: scale-in 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+
+        @keyframes scale-in {
+            0% { transform: scale(0); }
+            100% { transform: scale(1); }
+        }
+
+        .success-title {
+            font-size: 28px;
+            background: linear-gradient(135deg, var(--success), #059669);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        /* ===== SCROLLBAR ===== */
+        ::-webkit-scrollbar {
+            width: 4px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: var(--text-muted);
+            border-radius: 4px;
+        }
+
+        /* ===== ANIMATIONS ===== */
+        @keyframes fade-up {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .animate-in {
+            animation: fade-up 0.5s ease forwards;
+        }
+
+        .delay-1 { animation-delay: 0.1s; opacity: 0; }
+        .delay-2 { animation-delay: 0.2s; opacity: 0; }
+        .delay-3 { animation-delay: 0.3s; opacity: 0; }
+
+        /* ===== RESPONSIVE ===== */
+        @media (min-width: 480px) {
+            .content {
+                max-width: 420px;
+                margin-left: auto;
+                margin-right: auto;
+            }
         }
     </style>
 </head>
 <body>
 
-    <!-- Aesthetic Background Strokes & Shapes -->
-    <div class="bg-shapes-container">
-        <div class="bg-shape shape-1"></div>
-        <div class="bg-shape shape-2"></div>
-        <svg class="bg-svg-strokes" viewBox="0 0 500 800" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M-100 150 C 150 300, 200 100, 600 400" stroke="#D4AF37" stroke-width="2" stroke-dasharray="8 8"/>
-            <path d="M-50 500 C 250 400, 300 700, 550 600" stroke="#0B132B" stroke-width="2"/>
-        </svg>
+    <!-- Animated Background -->
+    <div class="bg-canvas">
+        <div class="bg-gradient"></div>
     </div>
 
-    <!-- DARK HERO SECTION -->
-    <div class="hero-section" id="hero-header">
-        <div class="ticker-wrap">
-            <div class="ticker-move">
-                🥇 XAUUSD: BUY @ 2420.50 🚀 | 📈 EURUSD: BULLISH | 👑 JAY EMPIRE VIP: 94.2% WIN RATE
+    <!-- Hero Section -->
+    <header class="hero">
+        <div class="ticker">
+            <div class="ticker-track">
+                <span class="ticker-item">🥇 XAUUSD BUY @ 2420.50</span>
+                <span class="ticker-item">📈 EURUSD BULLISH</span>
+                <span class="ticker-item">👑 94.2% WIN RATE</span>
+                <span class="ticker-item">🚀 BTC BREAKOUT</span>
+                <span class="ticker-item">💎 INSTITUTIONAL GRADE</span>
+                <span class="ticker-item">🥇 XAUUSD BUY @ 2420.50</span>
+                <span class="ticker-item">📈 EURUSD BULLISH</span>
+                <span class="ticker-item">👑 94.2% WIN RATE</span>
+                <span class="ticker-item">🚀 BTC BREAKOUT</span>
+                <span class="ticker-item">💎 INSTITUTIONAL GRADE</span>
             </div>
         </div>
-        <div class="brand-header">
-            <h1 class="brand-title">JAY EMPIRE</h1>
-            <p class="brand-sub" id="header-subtitle">Select your plan for precision trading and institutional insights.</p>
-        </div>
-    </div>
-
-    <!-- FLOATING CONTENT AREA -->
-    <div class="content-wrapper">
         
-        <!-- STEP 1: SELECT PLAN/CHANNEL -->
-        <div id="step-1" class="panel active">
+        <div class="hero-content">
+            <div class="brand-badge">
+                <span>⚡ Premium Signals</span>
+            </div>
+            <h1 class="brand-title">JAY EMPIRE</h1>
+            <p class="brand-subtitle" id="header-subtitle">Select your plan for precision trading and institutional insights.</p>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="content">
+
+        <!-- STEP 1: Select Plan -->
+        <section id="step-1" class="panel active">
             
-            <div class="floating-card">
-                <div class="card-pill-header">COMMODITIES</div>
-                <div class="card-icon">🪙</div>
+            <div class="glass-card animate-in delay-1">
+                <div class="card-eyebrow">🪙 Commodities</div>
+                <div class="card-icon">🥇</div>
                 <h2 class="card-title">Gold Master VIP</h2>
-                <p class="card-desc">Exclusive XAUUSD signals, high-probability setups, and institutional analysis.</p>
-                <button class="card-action-btn" onclick="chooseDestination('gold', 'Gold Master VIP')">SELECT PLAN</button>
+                <p class="card-desc">Exclusive XAUUSD signals with institutional-grade analysis and high-probability execution setups.</p>
+                <button class="btn btn-primary" onclick="chooseDestination('gold', 'Gold Master VIP')">Select Plan</button>
             </div>
 
-            <div class="floating-card">
-                <div class="card-pill-header">FOREX & CRYPTO</div>
-                <div class="card-icon">📈</div>
+            <div class="glass-card animate-in delay-2">
+                <div class="card-eyebrow">📈 Forex & Crypto</div>
+                <div class="card-icon">💱</div>
                 <h2 class="card-title">FX Premium Signals</h2>
-                <p class="card-desc">Curated execution on currency pairs and crypto markets.</p>
-                <button class="card-action-btn" onclick="chooseDestination('fx', 'FX Premium Signals')">SELECT PLAN</button>
+                <p class="card-desc">Curated currency pair signals and crypto market execution with real-time macro analysis.</p>
+                <button class="btn btn-primary" onclick="chooseDestination('fx', 'FX Premium Signals')">Select Plan</button>
             </div>
 
-            <div class="services-banner">
-                <div class="services-text">
+            <div class="services-banner animate-in delay-3">
+                <div>
                     <h3>Special Services</h3>
                     <p>Digital, Brand & Tech Hub</p>
                 </div>
-                <button class="services-btn" onclick="switchStep('services')">EXPLORE</button>
+                <button class="btn btn-secondary" style="width:auto; padding: 10px 20px; font-size: 12px;" onclick="switchStep('services')">Explore</button>
             </div>
 
-            <div class="contact-admin-wrapper">
-                Contact <a href="https://t.me/jay_empire247" target="_blank" class="contact-admin-link">Admin</a> for support
+            <div class="contact-bar">
+                Need help? <a href="https://t.me/jay_empire247" target="_blank">Contact Admin</a>
             </div>
-        </div>
+        </section>
 
-        <!-- STEP 2: USD SUBSCRIPTION DURATION OPTIONS -->
-        <div id="step-2" class="panel">
-            <div id="usd-plans-wrapper"></div>
+        <!-- STEP 2: Duration -->
+        <section id="step-2" class="panel">
+            <div id="plans-container"></div>
             
-            <div class="contact-admin-wrapper">
-                Contact <a href="https://t.me/jay_empire247" target="_blank" class="contact-admin-link">Admin</a> for support
+            <div class="contact-bar">
+                Need help? <a href="https://t.me/jay_empire247" target="_blank">Contact Admin</a>
             </div>
+            
+            <div class="back-link" onclick="switchStep(1)">
+                ← Back to Plans
+            </div>
+        </section>
 
-            <div class="nav-back" onclick="switchStep(1)">⬅️ Back to Signals</div>
-        </div>
-
-        <!-- STEP 3: REGIONAL CURRENCY SELECTION -->
-        <div id="step-3" class="panel">
-            <div class="floating-card" style="padding-bottom: 30px;">
-                <div class="card-pill-header">REGION & CURRENCY</div>
-                <h2 class="card-title">Select Region</h2>
-                <p class="card-desc" style="margin-bottom: 20px;">Choose your region to calculate exact local pricing.</p>
+        <!-- STEP 3: Region -->
+        <section id="step-3" class="panel">
+            <div class="glass-card">
+                <div class="card-eyebrow">🌍 Select Region</div>
+                <h2 class="card-title">Choose Your Currency</h2>
+                <p class="card-desc" style="margin-bottom: 20px;">We'll calculate exact local pricing for your subscription.</p>
                 
-                <div class="regions-scroll-container">
+                <div class="region-grid">
                     <button class="region-btn" onclick="chooseCurrency('GHS', 15.50, 'GHS ')">
-                        <span>🇬🇭</span> Ghana (GHS - Cedi)
+                        <span class="region-flag">🇬🇭</span>
+                        <span class="region-name">Ghana<br><span class="region-currency">Ghanaian Cedi</span></span>
                     </button>
                     <button class="region-btn" onclick="chooseCurrency('NGN', 1600.0, '₦')">
-                        <span>🇳🇬</span> Nigeria (NGN - Naira)
+                        <span class="region-flag">🇳🇬</span>
+                        <span class="region-name">Nigeria<br><span class="region-currency">Nigerian Naira</span></span>
                     </button>
                     <button class="region-btn" onclick="chooseCurrency('ZAR', 18.20, 'R ')">
-                        <span>🇿🇦</span> South Africa (ZAR - Rand)
+                        <span class="region-flag">🇿🇦</span>
+                        <span class="region-name">South Africa<br><span class="region-currency">South African Rand</span></span>
                     </button>
                     <button class="region-btn" onclick="chooseCurrency('KES', 130.0, 'KSh ')">
-                        <span>🇰🇪</span> Kenya (KES - Shilling)
+                        <span class="region-flag">🇰🇪</span>
+                        <span class="region-name">Kenya<br><span class="region-currency">Kenyan Shilling</span></span>
                     </button>
                     <button class="region-btn" onclick="chooseCurrency('USD', 1.0, '$')">
-                        <span>🌍</span> International (USD - Dollar)
+                        <span class="region-flag">🌍</span>
+                        <span class="region-name">International<br><span class="region-currency">US Dollar</span></span>
                     </button>
                     <button class="region-btn" onclick="chooseCurrency('GBP', 0.78, '£')">
-                        <span>🇬🇧</span> United Kingdom (GBP - Pound)
+                        <span class="region-flag">🇬🇧</span>
+                        <span class="region-name">United Kingdom<br><span class="region-currency">British Pound</span></span>
                     </button>
                     <button class="region-btn" onclick="chooseCurrency('EUR', 0.92, '€')">
-                        <span>🇪🇺</span> Eurozone (EUR - Euro)
+                        <span class="region-flag">🇪🇺</span>
+                        <span class="region-name">Eurozone<br><span class="region-currency">Euro</span></span>
                     </button>
                     <button class="region-btn" onclick="chooseCurrency('XOF', 605.0, 'CFA ')">
-                        <span>🌍</span> Francophone West Africa (XOF)
+                        <span class="region-flag">🌍</span>
+                        <span class="region-name">Francophone WA<br><span class="region-currency">CFA Franc</span></span>
                     </button>
                 </div>
             </div>
 
-            <div class="contact-admin-wrapper">
-                Contact <a href="https://t.me/jay_empire247" target="_blank" class="contact-admin-link">Admin</a> for support
+            <div class="contact-bar">
+                Need help? <a href="https://t.me/jay_empire247" target="_blank">Contact Admin</a>
             </div>
+            
+            <div class="back-link" onclick="switchStep(2)">
+                ← Back to Durations
+            </div>
+        </section>
 
-            <div class="nav-back" onclick="switchStep(2)">⬅️ Back to Durations</div>
-        </div>
-
-        <!-- STEP 4: LOCAL CURRENCY SUMMARY & CHECKOUT -->
-        <div id="step-4" class="panel">
-            <div class="floating-card">
-                <div class="card-pill-header" id="summary-plan-header">SELECTED PLAN</div>
-                <h2 class="card-title" id="summary-channel-title">VIP Terminal</h2>
-                <p class="card-desc" id="summary-duration-desc">Duration Plan Selected</p>
+        <!-- STEP 4: Checkout -->
+        <section id="step-4" class="panel">
+            <div class="glass-card">
+                <div class="card-eyebrow" id="summary-eyebrow">Plan Selected</div>
+                <h2 class="card-title" id="summary-title">VIP Terminal</h2>
+                <p class="card-desc" id="summary-desc">Review your subscription details</p>
                 
-                <div class="price-display" id="summary-price-display">GHS 0.00</div>
-                <div class="price-sub">Total Payable In Local Currency</div>
+                <div class="price-block">
+                    <div class="price-original" id="price-original"></div>
+                    <div class="price-tag" id="price-display">
+                        <span class="currency">GHS</span>0.00
+                    </div>
+                    <div class="price-label">Total Payable</div>
+                </div>
 
-                <!-- Terms & Conditions Option -->
-                <div class="tc-container">
+                <div class="terms-box">
                     <input type="checkbox" id="tc-checkbox" onchange="togglePayButton()">
                     <label for="tc-checkbox">
-                        I agree to the <span class="tc-link" onclick="openTCModal()">Terms & Conditions</span>. You must tap and read terms before proceeding.
+                        I agree to the <a onclick="openTCModal()">Terms & Conditions</a>. You must read the terms before proceeding.
                     </label>
                 </div>
 
-                <button id="final-pay-btn" class="card-action-btn" onclick="proceedToPaystack()" disabled>PROCEED TO PAY</button>
+                <button id="pay-btn" class="btn btn-primary btn-shimmer" onclick="proceedToPaystack()" disabled>
+                    Proceed to Payment
+                </button>
             </div>
 
-            <div class="contact-admin-wrapper">
-                Contact <a href="https://t.me/jay_empire247" target="_blank" class="contact-admin-link">Admin</a> for support
+            <div class="contact-bar">
+                Need help? <a href="https://t.me/jay_empire247" target="_blank">Contact Admin</a>
             </div>
+            
+            <div class="back-link" onclick="switchStep(3)">
+                ← Back to Regions
+            </div>
+        </section>
 
-            <div class="nav-back" onclick="switchStep(3)">⬅️ Back to Regions</div>
-        </div>
-
-        <!-- STEP SERVICES -->
-        <div id="step-services" class="panel">
-            <div class="service-list-item" onclick="openDirectService('Graphic Design')">
-                <div class="icon">🎨</div>
-                <div class="info">
+        <!-- STEP: Services -->
+        <section id="step-services" class="panel">
+            <div class="service-item" onclick="openDirectService('Graphic Design')">
+                <div class="service-icon">🎨</div>
+                <div class="service-info">
                     <h4>Graphic Design</h4>
-                    <p>Logos, flyers & brand visuals.</p>
+                    <p>Logos, flyers & brand visuals</p>
                 </div>
-                <div class="service-action">➔</div>
+                <div class="service-arrow">→</div>
             </div>
 
-            <div class="service-list-item" onclick="openDirectService('Video Editing')">
-                <div class="icon">🎬</div>
-                <div class="info">
+            <div class="service-item" onclick="openDirectService('Video Editing')">
+                <div class="service-icon">🎬</div>
+                <div class="service-info">
                     <h4>Video Editing</h4>
-                    <p>High-end commercials & reels.</p>
+                    <p>High-end commercials & reels</p>
                 </div>
-                <div class="service-action">➔</div>
+                <div class="service-arrow">→</div>
             </div>
 
-            <div class="service-list-item" onclick="openDirectService('Bulk SMS Money System')">
-                <div class="icon">📱</div>
-                <div class="info">
+            <div class="service-item" onclick="openDirectService('Bulk SMS Money System')">
+                <div class="service-icon">📱</div>
+                <div class="service-info">
                     <h4>Bulk SMS</h4>
-                    <p>Marketing campaigns & guides.</p>
+                    <p>Marketing campaigns & guides</p>
                 </div>
-                <div class="service-action">➔</div>
+                <div class="service-arrow">→</div>
             </div>
 
-            <div class="service-list-item" onclick="openDirectService('Brand & Digital Consultancy')">
-                <div class="icon">💼</div>
-                <div class="info">
+            <div class="service-item" onclick="openDirectService('Brand & Digital Consultancy')">
+                <div class="service-icon">💼</div>
+                <div class="service-info">
                     <h4>Brand & Digital Consultancy</h4>
-                    <p>Executive strategy & design.</p>
+                    <p>Executive strategy & design</p>
                 </div>
-                <div class="service-action">➔</div>
+                <div class="service-arrow">→</div>
             </div>
 
-            <div class="contact-admin-wrapper">
-                Contact <a href="https://t.me/jay_empire247" target="_blank" class="contact-admin-link">Admin</a> for support
+            <div class="contact-bar">
+                Need help? <a href="https://t.me/jay_empire247" target="_blank">Contact Admin</a>
             </div>
+            
+            <div class="back-link" onclick="switchStep(1)">
+                ← Back to Main Menu
+            </div>
+        </section>
 
-            <div class="nav-back" onclick="switchStep(1)">⬅️ Back to Main Menu</div>
-        </div>
-
-        <!-- SUCCESS SCREEN -->
-        <div id="step-success" class="panel">
-            <div class="floating-card">
-                <div class="card-pill-header" style="background: #10B981;">VERIFIED</div>
-                <div class="card-icon">👑</div>
-                <h2 class="card-title">Access Granted</h2>
-                <p class="card-desc">Your payment was successful. Tap below to enter the VIP Terminal immediately.</p>
-                <a id="vip-join-btn" href="#" target="_blank" style="text-decoration: none;">
-                    <button class="card-action-btn">ENTER VIP CHANNEL</button>
+        <!-- STEP: Success -->
+        <section id="step-success" class="panel">
+            <div class="glass-card" style="text-align: center;">
+                <div class="success-ring">👑</div>
+                <h2 class="card-title success-title">Access Granted</h2>
+                <p class="card-desc">Your payment was successful. Welcome to the inner circle.</p>
+                <a id="vip-link" href="#" target="_blank" style="text-decoration: none; display: block; margin-top: 8px;">
+                    <button class="btn btn-primary">Enter VIP Channel</button>
                 </a>
             </div>
 
-            <div class="contact-admin-wrapper">
-                Contact <a href="https://t.me/jay_empire247" target="_blank" class="contact-admin-link">Admin</a> for support
+            <div class="contact-bar">
+                Need help? <a href="https://t.me/jay_empire247" target="_blank">Contact Admin</a>
             </div>
-        </div>
+        </section>
 
-    </div>
+    </main>
 
-    <!-- MANDATORY TERMS & CONDITIONS MODAL -->
+    <!-- Terms Modal -->
     <div class="modal-overlay" id="tc-modal">
-        <div class="modal-content">
-            <div class="modal-header">Terms & Conditions</div>
+        <div class="modal-box">
+            <h3 class="modal-title">Terms & Conditions</h3>
             <div class="modal-body">
-                <p><strong>1. Risk Disclosure:</strong> Financial trading involves risk. Signal performance varies, and past returns do not guarantee future outcomes.</p><br>
-                <p><strong>2. Digital Goods Policy:</strong> All access passes to VIP Telegram channels are non-refundable once activated.</p><br>
-                <p><strong>3. Usage Rights:</strong> Signals are strictly for personal use. Unauthorized distribution, copying, or reselling will result in immediate termination without refund.</p>
+                <p><strong>1. Risk Disclosure:</strong> Financial trading involves substantial risk. Past performance of signals does not guarantee future results. Trade responsibly.</p>
+                <p><strong>2. Non-Refundable:</strong> All VIP channel access passes are digital goods. Once activated, subscriptions cannot be refunded or transferred.</p>
+                <p><strong>3. Confidentiality:</strong> Signals are for personal use only. Unauthorized distribution, reselling, or sharing will result in immediate termination without refund.</p>
+                <p><strong>4. Market Volatility:</strong> We provide analysis, not financial advice. Always conduct your own due diligence before executing trades.</p>
             </div>
-            <button class="modal-btn" onclick="acceptAndCloseTC()">I HAVE READ AND ACCEPT</button>
+            <button class="btn btn-primary" onclick="acceptTC()">I Have Read & Accept</button>
         </div>
     </div>
 
-    <!-- PERSISTENT FOOTER -->
     <footer class="app-footer">
         Powered by Jay Empire Tech
     </footer>
 
     <script>
+        // Initialize Telegram WebApp
         const tg = window.Telegram.WebApp;
         tg.expand();
         tg.ready();
+        if (tg.setHeaderColor) tg.setHeaderColor('#0a0e1a');
 
-        if (tg.setHeaderColor) {
-            tg.setHeaderColor('#0B132B'); 
-        }
-
+        // State
         let targetChannel = '';
         let targetChannelTitle = '';
         let selectedPlan = null;
@@ -760,64 +1030,97 @@
         let currencySymbol = 'GHS ';
         let hasReadTC = false;
 
-        const GOLD_LINK = "https://t.me/+env-Zrui2ykwYjg8"; 
-        const FOREX_LINK = "https://t.me/+njii3OAHlqI3MjQ8"; 
+        const GOLD_LINK = "https://t.me/+env-Zrui2ykwYjg8";
+        const FOREX_LINK = "https://t.me/+njii3OAHlqI3MjQ8";
 
         const plans = [
-            { key: 'test_phase', name: 'Test Phase (10%)', usd: 0.10, days: 1, isTest: true },
-            { key: '1_month', name: '1 Month Access', usd: 15, days: 30, isTest: false },
-            { key: '3_months', name: '3 Months Access', usd: 40, days: 90, isTest: false },
-            { key: '6_months', name: '6 Months Access', usd: 80, days: 180, isTest: false },
-            { key: '1_year', name: '1 Year Access', usd: 150, days: 365, isTest: false },
-            { key: 'lifetime', name: 'Lifetime VIP', usd: 700, days: 36500, isTest: false }
+            { key: 'test', name: 'Test Phase', usd: 0.10, days: 1, isTest: true, original: 1.00 },
+            { key: '1m', name: '1 Month Access', usd: 15, days: 30, isTest: false, original: 25 },
+            { key: '3m', name: '3 Months Access', usd: 40, days: 90, isTest: false, original: 60 },
+            { key: '6m', name: '6 Months Access', usd: 80, days: 180, isTest: false, original: 120 },
+            { key: '1y', name: '1 Year Access', usd: 150, days: 365, isTest: false, original: 250 },
+            { key: 'lifetime', name: 'Lifetime VIP', usd: 700, days: 36500, isTest: false, original: 1500 }
         ];
 
-        function switchStep(stepVal) {
-            document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
-            document.getElementById(`step-${stepVal}`).classList.add('active');
+        // Generate background particles
+        function createParticles() {
+            const container = document.querySelector('.bg-canvas');
+            for (let i = 0; i < 15; i++) {
+                const p = document.createElement('div');
+                p.className = 'particle';
+                p.style.left = Math.random() * 100 + '%';
+                p.style.animationDelay = Math.random() * 8 + 's';
+                p.style.animationDuration = (6 + Math.random() * 4) + 's';
+                container.appendChild(p);
+            }
+        }
+        createParticles();
+
+        // Navigation
+        function switchStep(step) {
+            document.querySelectorAll('.panel').forEach(p => {
+                p.classList.remove('active');
+                // Reset animations
+                p.querySelectorAll('.animate-in').forEach(el => {
+                    el.style.animation = 'none';
+                    el.offsetHeight; // trigger reflow
+                    el.style.animation = null;
+                });
+            });
             
-            const subTitle = document.getElementById('header-subtitle');
-            if(stepVal === 1) subTitle.innerText = "Select your plan for precision trading and institutional insights.";
-            if(stepVal === 2) subTitle.innerText = "Select a subscription duration plan.";
-            if(stepVal === 3) subTitle.innerText = "Choose your region to compute local currency.";
-            if(stepVal === 4) subTitle.innerText = "Review total payable and accept terms to check out.";
-            if(stepVal === 'services') subTitle.innerText = "Explore our premium digital agency and consultancy services.";
+            const target = document.getElementById(`step-${step}`);
+            target.classList.add('active');
             
-            window.scrollTo(0, 0);
+            const subtitles = {
+                1: "Select your plan for precision trading and institutional insights.",
+                2: "Choose your subscription duration.",
+                3: "Select your region for local currency pricing.",
+                4: "Review and complete your subscription.",
+                services: "Explore our premium digital services.",
+                success: "Welcome to the inner circle."
+            };
+            document.getElementById('header-subtitle').textContent = subtitles[step] || subtitles[1];
+            
+            window.scrollTo({ top: 0, behavior: 'smooth' });
         }
 
         function chooseDestination(key, title) {
             targetChannel = key;
             targetChannelTitle = title;
-            buildUSDPlansUI();
+            renderPlans();
             switchStep(2);
         }
 
-        function buildUSDPlansUI() {
-            const wrapper = document.getElementById('usd-plans-wrapper');
-            wrapper.innerHTML = '';
-
-            plans.forEach(plan => {
+        function renderPlans() {
+            const container = document.getElementById('plans-container');
+            container.innerHTML = '';
+            
+            plans.forEach((plan, i) => {
                 const card = document.createElement('div');
-                card.className = 'floating-card';
+                const isPremium = plan.key === 'lifetime';
+                card.className = `glass-card ${isPremium ? 'premium' : ''} animate-in delay-${Math.min(i+1, 3)}`;
+                
+                const originalPrice = plan.original ? `<div class="price-original">$${plan.original.toFixed(2)} USD</div>` : '';
+                const badge = isPremium ? '<div class="premium-badge">Best Value</div>' : '';
+                
                 card.innerHTML = `
-                    <div class="card-pill-header">${plan.name}</div>
-                    <div class="price-display">$${plan.usd.toFixed(2)}</div>
-                    <div class="price-sub">USD Standard Plan</div>
-                    <button class="card-action-btn" onclick="selectUSDPlan('${plan.key}')">SELECT DURATION</button>
+                    ${badge}
+                    <div class="card-eyebrow">${plan.name}</div>
+                    ${originalPrice}
+                    <div class="price-block" style="margin: 12px 0;">
+                        <div class="price-tag"><span class="currency">$</span>${plan.usd.toFixed(2)}</div>
+                        <div class="price-label">USD</div>
+                    </div>
+                    <p class="card-desc">${plan.days === 36500 ? 'Unlimited lifetime access to all VIP channels' : `${plan.days}-day access to ${targetChannelTitle}`}</p>
+                    <button class="btn btn-primary" onclick="selectPlan('${plan.key}')">Select Duration</button>
                 `;
-                wrapper.appendChild(card);
+                container.appendChild(card);
             });
         }
 
-        function selectUSDPlan(planKey) {
-            selectedPlan = plans.find(p => p.key === planKey);
+        function selectPlan(key) {
+            selectedPlan = plans.find(p => p.key === key);
             switchStep(3);
-        }
-
-        function openDirectService(serviceName) {
-            const msg = encodeURIComponent(`Hello Jay Empire, I need info about: ${serviceName}`);
-            window.location.href = `https://t.me/jay_empire247?text=${msg}`;
         }
 
         function chooseCurrency(curr, rate, symbol) {
@@ -825,75 +1128,90 @@
             conversionRate = rate;
             currencySymbol = symbol;
             
-            // Prepare Step 4 Local Currency Summary
-            document.getElementById('summary-plan-header').innerText = selectedPlan.name;
-            document.getElementById('summary-channel-title').innerText = targetChannelTitle;
-            document.getElementById('summary-duration-desc').innerText = `Subscription Duration: ${selectedPlan.days} Days`;
+            const total = selectedPlan.usd * conversionRate;
+            const original = selectedPlan.original ? selectedPlan.usd * 1.5 * conversionRate : null;
             
-            let totalLocal = selectedPlan.usd * conversionRate;
-            let priceText = totalLocal.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2});
-            document.getElementById('summary-price-display').innerText = `${currencySymbol}${priceText}`;
-
-            // Reset T&C Check
+            document.getElementById('summary-eyebrow').textContent = selectedPlan.name;
+            document.getElementById('summary-title').textContent = targetChannelTitle;
+            document.getElementById('summary-desc').textContent = `${selectedPlan.days === 36500 ? 'Lifetime' : selectedPlan.days + '-day'} subscription`;
+            
+            document.getElementById('price-display').innerHTML = 
+                `<span class="currency">${currencySymbol}</span>${total.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+            
+            const origEl = document.getElementById('price-original');
+            if (original) {
+                origEl.textContent = `${currencySymbol}${original.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+                origEl.style.display = 'block';
+            } else {
+                origEl.style.display = 'none';
+            }
+            
             document.getElementById('tc-checkbox').checked = false;
-            document.getElementById('final-pay-btn').disabled = true;
-
+            document.getElementById('pay-btn').disabled = true;
+            hasReadTC = false;
+            
             switchStep(4);
         }
 
         function openTCModal() {
-            document.getElementById('tc-modal').style.display = 'flex';
+            document.getElementById('tc-modal').classList.add('show');
         }
 
-        function acceptAndCloseTC() {
+        function acceptTC() {
             hasReadTC = true;
-            document.getElementById('tc-modal').style.display = 'none';
+            document.getElementById('tc-modal').classList.remove('show');
             document.getElementById('tc-checkbox').checked = true;
-            togglePayButton();
+            document.getElementById('pay-btn').disabled = false;
         }
 
         function togglePayButton() {
-            const checkbox = document.getElementById('tc-checkbox');
-            const payBtn = document.getElementById('final-pay-btn');
+            const cb = document.getElementById('tc-checkbox');
+            const btn = document.getElementById('pay-btn');
             
-            if (!hasReadTC && checkbox.checked) {
-                checkbox.checked = false;
+            if (!hasReadTC && cb.checked) {
+                cb.checked = false;
                 openTCModal();
                 return;
             }
-            payBtn.disabled = !checkbox.checked;
+            btn.disabled = !cb.checked;
         }
 
         function proceedToPaystack() {
-            const isChecked = document.getElementById('tc-checkbox').checked;
-            if (!isChecked || !hasReadTC) {
-                alert("You must read and agree to the Terms & Conditions first.");
+            if (!hasReadTC || !document.getElementById('tc-checkbox').checked) {
+                tg.showAlert ? tg.showAlert("Please read and accept the Terms & Conditions.") : alert("Please read and accept the Terms & Conditions.");
                 return;
             }
 
-            let amountInSubunits = Math.round(selectedPlan.usd * conversionRate * 100);
-            triggerPaystack(amountInSubunits, selectedPlan.days);
-        }
+            const user = tg.initDataUnsafe?.user;
+            const amount = Math.round(selectedPlan.usd * conversionRate * 100);
 
-        function triggerPaystack(amountSubunits, days) {
-            const user = tg.initDataUnsafe ? tg.initDataUnsafe.user : null;
-            const userEmail = user ? `user_${user.id}@jayempire.com` : 'client@jayempire.com';
-
-            let handler = PaystackPop.setup({
+            PaystackPop.setup({
                 key: 'pk_live_c470302d79292c5df97f088509a5a99d39788fc8',
-                email: userEmail,
-                amount: amountSubunits,
+                email: user ? `user_${user.id}@jayempire.com` : 'client@jayempire.com',
+                amount: amount,
                 currency: activeCurrency,
-                metadata: { telegram_id: user ? user.id : 0, channel_type: targetChannel, days: days },
+                metadata: {
+                    telegram_id: user?.id || 0,
+                    channel_type: targetChannel,
+                    days: selectedPlan.days
+                },
                 callback: function(response) {
-                    const activeLink = targetChannel === 'gold' ? GOLD_LINK : FOREX_LINK;
-                    document.getElementById('vip-join-btn').href = activeLink;
+                    document.getElementById('vip-link').href = targetChannel === 'gold' ? GOLD_LINK : FOREX_LINK;
                     switchStep('success');
                 },
-                onClose: function() { }
-            });
-            handler.openIframe();
+                onClose: function() {}
+            }).openIframe();
         }
+
+        function openDirectService(name) {
+            const msg = encodeURIComponent(`Hello Jay Empire, I'm interested in: ${name}`);
+            window.open(`https://t.me/jay_empire247?text=${msg}`, '_blank');
+        }
+
+        // Close modal on backdrop click
+        document.getElementById('tc-modal').addEventListener('click', function(e) {
+            if (e.target === this) this.classList.remove('show');
+        });
     </script>
 </body>
 </html>
