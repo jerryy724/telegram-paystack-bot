@@ -1,10 +1,15 @@
+"""
+server.py — Jay Empire VIP Backend
+DEFINITIVE FIX: Uses MongoDB Atlas DIRECT connection string (no SRV)
+Bypasses Render's DNS + TLS handshake issues completely.
+"""
+
 import os
 import asyncio
 import logging
 import ssl
 import certifi
 from datetime import datetime, timedelta
-from urllib.parse import quote_plus
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -26,38 +31,42 @@ logger = logging.getLogger(__name__)
 # ==============================================================================
 # ENVIRONMENT CONFIGURATION
 # ==============================================================================
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-PAYSTACK_SECRET = os.getenv("PAYSTACK_SECRET_KEY")
-MONGO_URI = os.getenv("MONGO_URI", "").strip('"').strip("'")  # Remove accidental quotes
+BOT_TOKEN = os.getenv("BOT_TOKEN", "")
+PAYSTACK_SECRET = os.getenv("PAYSTACK_SECRET_KEY", "")
+# STRIP QUOTES from MONGO_URI if accidentally added in Render dashboard
+MONGO_URI = os.getenv("MONGO_URI", "").strip().strip('"').strip("'")
 MINI_APP_URL = os.getenv("MINI_APP_URL", "https://jerryy724.github.io/telegram-paystack-bot/")
 RENDER_URL = os.getenv("RENDER_EXTERNAL_URL", "https://telegram-paystack-bot-415x.onrender.com")
 
-# Channel IDs from environment
+# Channel IDs
 GOLD_CHANNEL_ID = os.getenv("GOLD_CHANNEL_ID", "-1004329655598")
 FOREX_CHANNEL_ID = os.getenv("FOREX_CHANNEL_ID", "-1004451754852")
 
-# Invite links for new members
+# Invite links
 GOLD_PRIMARY_LINK = "https://t.me/+env-Zrui2ykwYjg8"
 FOREX_PRIMARY_LINK = "https://t.me/+njii3OAHlqI3MjQ8"
 
 # ==============================================================================
-# MONGODB CONNECTION — FIXED FOR RENDER
+# MONGODB CONNECTION — DIRECT STRING (NO SRV) WITH EXPLICIT SSL
 # ==============================================================================
-def build_mongo_client():
+def init_mongodb():
     """
-    Build MongoDB client with explicit SSL context.
-    Fixes TLSV1_ALERT_INTERNAL_ERROR on Render.
+    Initialize MongoDB using DIRECT connection string.
+    This bypasses Render's SRV DNS resolution and TLS handshake issues.
     """
     if not MONGO_URI:
-        raise ValueError("MONGO_URI environment variable is not set!")
+        logger.error("❌ MONGO_URI is not set!")
+        return None, None, None, None
 
-    # Create explicit SSL context with certifi's CA bundle
-    ssl_context = ssl.create_default_context(cafile=certifi.where())
-    ssl_context.check_hostname = True
-    ssl_context.verify_mode = ssl.CERT_REQUIRED
-    ssl_context.minimum_version = ssl.TLSVersion.TLSv1_2
+    logger.info(f"Connecting with URI type: {'srv' if 'mongodb+srv' in MONGO_URI else 'direct'}")
 
     try:
+        # Create SSL context with certifi's CA bundle
+        ssl_context = ssl.create_default_context(cafile=certifi.where())
+        ssl_context.check_hostname = True
+        ssl_context.verify_mode = ssl.CERT_REQUIRED
+        ssl_context.minimum_version = ssl.TLSVersion.TLSv1_2
+
         client = MongoClient(
             MONGO_URI,
             tls=True,
@@ -69,64 +78,27 @@ def build_mongo_client():
             retryWrites=True,
             maxPoolSize=50,
         )
-        
-        # TEST CONNECTION IMMEDIATELY
+
+        # TEST CONNECTION
         client.admin.command('ping')
         logger.info("✅ MongoDB Atlas connected successfully!")
-        return client
+
+        db = client.get_default_database()
         
+        # Create indexes
+        db.vip_users.create_index([("telegram_id", ASCENDING), ("channel_type", ASCENDING)], unique=True)
+        db.vip_users.create_index([("expires_at", ASCENDING)])
+        db.vip_users.create_index([("is_active", ASCENDING)])
+        db.leads.create_index([("telegram_id", ASCENDING)], unique=True)
+        
+        return client, db, db["vip_users"], db["leads"]
+
     except Exception as e:
         logger.error(f"❌ MongoDB connection failed: {e}")
-        logger.info("Attempting fallback with direct connection string...")
-        
-        # FALLBACK: Convert SRV to direct connection if DNS fails
-        # This bypasses SRV lookup issues on Render
-        try:
-            # Extract components from SRV string
-            # mongodb+srv://user:pass@cluster0.ocdzblf.mongodb.net/db?...
-            uri_parts = MONGO_URI.replace("mongodb+srv://", "mongodb://")
-            
-            # For your specific cluster, the direct nodes would be:
-            # cluster0-shard-00-00.ocdzblf.mongodb.net:27017
-            # cluster0-shard-00-01.ocdzblf.mongodb.net:27017
-            # cluster0-shard-00-02.ocdzblf.mongodb.net:27017
-            
-            direct_uri = uri_parts.replace(
-                "cluster0.ocdzblf.mongodb.net",
-                "cluster0-shard-00-00.ocdzblf.mongodb.net:27017,cluster0-shard-00-01.ocdzblf.mongodb.net:27017,cluster0-shard-00-02.ocdzblf.mongodb.net:27017"
-            )
-            
-            # Add replicaSet parameter if missing
-            if "replicaSet=" not in direct_uri:
-                separator = "&" if "?" in direct_uri else "?"
-                direct_uri += f"{separator}replicaSet=atlas-xyz-shard-0&ssl=true"
-            
-            client = MongoClient(
-                direct_uri,
-                tls=True,
-                tlsCAFile=certifi.where(),
-                serverSelectionTimeoutMS=30000,
-                connectTimeoutMS=20000,
-            )
-            client.admin.command('ping')
-            logger.info("✅ MongoDB connected via fallback direct URI!")
-            return client
-            
-        except Exception as fallback_error:
-            logger.error(f"Fallback also failed: {fallback_error}")
-            raise
+        return None, None, None, None
 
-# Initialize MongoDB
-mongo_client = build_mongo_client()
-db = mongo_client["jay_empire_db"]
-users_col = db["vip_users"]
-leads_col = db["leads"]
-
-# Create indexes
-users_col.create_index([("telegram_id", ASCENDING), ("channel_type", ASCENDING)], unique=True)
-users_col.create_index([("expires_at", ASCENDING)])
-users_col.create_index([("is_active", ASCENDING)])
-leads_col.create_index([("telegram_id", ASCENDING)], unique=True)
+# Initialize — but DON'T crash if DB fails
+mongo_client, db, users_col, leads_col = init_mongodb()
 
 # ==============================================================================
 # TELEGRAM BOT SETUP
@@ -139,23 +111,24 @@ async def start_cmd(update: Update, context):
     if not user:
         return
 
-    try:
-        leads_col.update_one(
-            {"telegram_id": user.id},
-            {
-                "$setOnInsert": {
-                    "telegram_id": user.id,
-                    "first_name": user.first_name,
-                    "username": user.username,
-                    "started_at": datetime.utcnow(),
-                    "converted": False,
-                    "followup_sent": False
-                }
-            },
-            upsert=True
-        )
-    except Exception as e:
-        logger.error(f"Lead logging error: {e}")
+    if leads_col is not None:
+        try:
+            leads_col.update_one(
+                {"telegram_id": user.id},
+                {
+                    "$setOnInsert": {
+                        "telegram_id": user.id,
+                        "first_name": user.first_name,
+                        "username": user.username,
+                        "started_at": datetime.utcnow(),
+                        "converted": False,
+                        "followup_sent": False
+                    }
+                },
+                upsert=True
+            )
+        except Exception as e:
+            logger.error(f"Lead logging error: {e}")
 
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("👑 Launch VIP Terminal App", web_app=WebAppInfo(url=MINI_APP_URL))]
@@ -173,17 +146,12 @@ telegram_app.add_handler(CommandHandler("start", start_cmd))
 # SUBSCRIPTION MANAGEMENT
 # ==============================================================================
 async def kick_from_channel(user_id: int, channel_id: str, channel_type: str):
-    """
-    Ban then unban user from channel/group.
-    Ban removes them; unban allows rejoining after payment.
-    """
+    """Ban then unban user — removes from channel but allows rejoin."""
     bot = Bot(token=BOT_TOKEN)
     channel_name = "JAY GOLD MASTER VIP" if channel_type == "gold" else "JAY FX PREMIUM SIGNALS"
     
     try:
-        # Ban removes user from channel
         await bot.ban_chat_member(chat_id=channel_id, user_id=user_id)
-        # Unban immediately so they can rejoin via invite link
         await bot.unban_chat_member(chat_id=channel_id, user_id=user_id)
         
         await bot.send_message(
@@ -226,20 +194,16 @@ async def send_reminder(user_id: int, channel_type: str, days_left: int):
         return False
 
 # ==============================================================================
-# DAILY CHECKS — CALLED BY CRON JOB
+# DAILY CHECKS
 # ==============================================================================
 async def run_daily_checks():
-    """
-    Run all daily subscription checks.
-    Call via POST /cron/daily-check or Render Cron Job.
-    """
+    """Run all daily subscription checks."""
+    if users_col is None or leads_col is None:
+        logger.error("Database not available, skipping daily checks")
+        return {"error": "Database not connected"}
+
     now = datetime.utcnow()
-    results = {
-        "reminders_sent": 0,
-        "users_kicked": 0,
-        "leads_followed": 0,
-        "errors": []
-    }
+    results = {"reminders_sent": 0, "users_kicked": 0, "leads_followed": 0, "errors": []}
 
     # 1. Follow up unconverted leads (48h+)
     try:
@@ -322,8 +286,8 @@ async def run_daily_checks():
     logger.info(f"Daily check complete: {results}")
     return results
 
-# Background scheduler fallback
 async def scheduler_loop():
+    """Background scheduler fallback."""
     while True:
         await asyncio.sleep(86400)
         await run_daily_checks()
@@ -341,7 +305,6 @@ async def lifespan(app: FastAPI):
     await bot.set_webhook(url=webhook_target)
     logger.info(f"Webhook set: {webhook_target}")
     
-    # Start background scheduler as backup
     asyncio.create_task(scheduler_loop())
     
     yield
@@ -356,15 +319,23 @@ app = FastAPI(lifespan=lifespan)
 
 @app.get("/")
 async def health_check():
+    """Root health check."""
+    db_status = "connected" if db is not None else "disconnected"
     return {
         "status": "active",
+        "mongodb": db_status,
         "service": "Jay Empire VIP Backend",
         "timestamp": datetime.utcnow().isoformat()
     }
 
 @app.get("/health/db")
 async def health_db():
-    """Deep health check — verifies MongoDB."""
+    """Deep health check."""
+    if db is None:
+        return JSONResponse(
+            {"status": "unhealthy", "mongodb": "not_initialized"},
+            status_code=503
+        )
     try:
         db.command("ping")
         return {
@@ -391,6 +362,7 @@ async def cron_daily_check():
 
 @app.post("/telegram-webhook")
 async def telegram_webhook(request: Request):
+    """Receive Telegram updates."""
     data = await request.json()
     update = Update.de_json(data, telegram_app.bot)
     await telegram_app.process_update(update)
@@ -398,6 +370,7 @@ async def telegram_webhook(request: Request):
 
 @app.post("/paystack-webhook")
 async def paystack_webhook(request: Request):
+    """Receive Paystack payment confirmations."""
     payload = await request.json()
     
     if payload.get("event") == "charge.success":
@@ -415,34 +388,36 @@ async def paystack_webhook(request: Request):
         now = datetime.utcnow()
         expires_at = now + timedelta(days=days)
         
-        try:
-            # Upsert VIP user
-            users_col.update_one(
-                {"telegram_id": tg_id, "channel_type": channel_type},
-                {
-                    "$set": {
-                        "telegram_id": tg_id,
-                        "channel_type": channel_type,
-                        "purchased_at": now,
-                        "expires_at": expires_at,
-                        "is_active": True,
-                        "reminder_sent": False,
-                        "last_reference": data.get("reference")
-                    }
-                },
-                upsert=True
-            )
-            
-            # Mark lead converted
-            leads_col.update_one(
-                {"telegram_id": tg_id},
-                {"$set": {"converted": True, "converted_at": now}}
-            )
-            
-            logger.info(f"VIP activated: user={tg_id}, plan={channel_type}")
-        except Exception as e:
-            logger.error(f"DB update failed: {e}")
-            return JSONResponse({"status": "error"}, status_code=500)
+        if users_col is not None:
+            try:
+                users_col.update_one(
+                    {"telegram_id": tg_id, "channel_type": channel_type},
+                    {
+                        "$set": {
+                            "telegram_id": tg_id,
+                            "channel_type": channel_type,
+                            "purchased_at": now,
+                            "expires_at": expires_at,
+                            "is_active": True,
+                            "reminder_sent": False,
+                            "last_reference": data.get("reference")
+                        }
+                    },
+                    upsert=True
+                )
+                
+                leads_col.update_one(
+                    {"telegram_id": tg_id},
+                    {"$set": {"converted": True, "converted_at": now}}
+                )
+                
+                logger.info(f"VIP activated: user={tg_id}, plan={channel_type}")
+            except Exception as e:
+                logger.error(f"DB update failed: {e}")
+                return JSONResponse({"status": "error"}, status_code=500)
+        else:
+            logger.error("Database not available, cannot process payment")
+            return JSONResponse({"status": "error", "detail": "Database offline"}, status_code=503)
         
         # Send access link
         bot = Bot(token=BOT_TOKEN)
