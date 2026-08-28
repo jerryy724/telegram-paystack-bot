@@ -1,0 +1,48 @@
+services:
+  - type: web
+    name: telegram-paystack-bot
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn server:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHONUNBUFFERED
+        value: "1"
+      - key: MONGO_URI
+        sync: false
+      - key: BOT_TOKEN
+        sync: false
+      - key: PAYSTACK_SECRET_KEY
+        sync: false
+      - key: PAYSTACK_PUBLIC_KEY
+        sync: false
+      - key: RENDER_EXTERNAL_URL
+        sync: false
+      - key: MINI_APP_URL
+        sync: false
+      - key: GOLD_GROUP_ID
+        sync: false
+      - key: FOREX_GROUP_ID
+        sync: false
+
+  - type: cron
+    name: daily-subscription-check
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    schedule: "0 9 * * *"  # 9 AM UTC daily
+    startCommand: |
+      python -c "
+      import asyncio
+      from server import run_daily_checks
+      asyncio.run(run_daily_checks())
+      "
+    envVars:
+      - key: MONGO_URI
+        sync: false
+      - key: BOT_TOKEN
+        sync: false
+      - key: GOLD_GROUP_ID
+        sync: false
+      - key: FOREX_GROUP_ID
+        sync: false
