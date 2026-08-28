@@ -22,27 +22,3 @@ services:
         sync: false
       - key: FOREX_CHANNEL_ID
         sync: false
-
-  - type: cron
-    name: daily-subscription-check
-    runtime: python
-    plan: free
-    buildCommand: pip install -r requirements.txt
-    schedule: "0 9 * * *"
-    startCommand: |
-      python -c "
-      import asyncio
-      from server import run_daily_checks
-      asyncio.run(run_daily_checks())
-      "
-    envVars:
-      - key: BOT_TOKEN
-        sync: false
-      - key: MONGO_URI
-        sync: false
-      - key: GOLD_CHANNEL_ID
-        sync: false
-      - key: FOREX_CHANNEL_ID
-        sync: false
-      - key: PAYSTACK_SECRET_KEY
-        sync: false
