@@ -4,9 +4,10 @@ import logging
 import ssl
 import certifi
 from datetime import datetime, timedelta
+from urllib.parse import quote_plus
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request, BackgroundTasks
+from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from pymongo import MongoClient, ASCENDING
 from pymongo.server_api import ServerApi
@@ -27,71 +28,105 @@ logger = logging.getLogger(__name__)
 # ==============================================================================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 PAYSTACK_SECRET = os.getenv("PAYSTACK_SECRET_KEY")
-MONGO_URI = os.getenv("MONGO_URI")
+MONGO_URI = os.getenv("MONGO_URI", "").strip('"').strip("'")  # Remove accidental quotes
 MINI_APP_URL = os.getenv("MINI_APP_URL", "https://jerryy724.github.io/telegram-paystack-bot/")
 RENDER_URL = os.getenv("RENDER_EXTERNAL_URL", "https://telegram-paystack-bot-415x.onrender.com")
 
-# Channel/Group IDs (MUST be actual Telegram IDs, not invite links)
-# Get these by adding @userinfobot to your channel/group
-GOLD_GROUP_ID = os.getenv("GOLD_GROUP_ID", "-1001234567890")  # Replace with real ID
-FOREX_GROUP_ID = os.getenv("FOREX_GROUP_ID", "-1001234567891")  # Replace with real ID
+# Channel IDs from environment
+GOLD_CHANNEL_ID = os.getenv("GOLD_CHANNEL_ID", "-1004329655598")
+FOREX_CHANNEL_ID = os.getenv("FOREX_CHANNEL_ID", "-1004451754852")
 
-# Invite links for NEW members
+# Invite links for new members
 GOLD_PRIMARY_LINK = "https://t.me/+env-Zrui2ykwYjg8"
 FOREX_PRIMARY_LINK = "https://t.me/+njii3OAHlqI3MjQ8"
 
 # ==============================================================================
-# MONGODB CONNECTION — FIXED TLS FOR RENDER
+# MONGODB CONNECTION — FIXED FOR RENDER
 # ==============================================================================
-def init_mongodb():
+def build_mongo_client():
     """
-    Initialize MongoDB with explicit SSL context.
-    This fixes TLSV1_ALERT_INTERNAL_ERROR on Render.
+    Build MongoDB client with explicit SSL context.
+    Fixes TLSV1_ALERT_INTERNAL_ERROR on Render.
     """
     if not MONGO_URI:
         raise ValueError("MONGO_URI environment variable is not set!")
 
-    # Build explicit SSL context using certifi's CA bundle
+    # Create explicit SSL context with certifi's CA bundle
     ssl_context = ssl.create_default_context(cafile=certifi.where())
     ssl_context.check_hostname = True
     ssl_context.verify_mode = ssl.CERT_REQUIRED
-    ssl_context.minimum_version = ssl.TLSVersion.TLSv1_2  # Force TLS 1.2+
+    ssl_context.minimum_version = ssl.TLSVersion.TLSv1_2
 
-    client = MongoClient(
-        MONGO_URI,
-        tls=True,
-        tlsCAFile=certifi.where(),
-        server_api=ServerApi('1'),  # Required for Atlas compatibility
-        serverSelectionTimeoutMS=30000,
-        connectTimeoutMS=20000,
-        socketTimeoutMS=45000,
-        retryWrites=True,
-        maxPoolSize=50,
-    )
-
-    # IMMEDIATE connection test — fail fast if broken
     try:
+        client = MongoClient(
+            MONGO_URI,
+            tls=True,
+            tlsCAFile=certifi.where(),
+            server_api=ServerApi('1'),
+            serverSelectionTimeoutMS=30000,
+            connectTimeoutMS=20000,
+            socketTimeoutMS=45000,
+            retryWrites=True,
+            maxPoolSize=50,
+        )
+        
+        # TEST CONNECTION IMMEDIATELY
         client.admin.command('ping')
         logger.info("✅ MongoDB Atlas connected successfully!")
+        return client
+        
     except Exception as e:
         logger.error(f"❌ MongoDB connection failed: {e}")
-        raise
+        logger.info("Attempting fallback with direct connection string...")
+        
+        # FALLBACK: Convert SRV to direct connection if DNS fails
+        # This bypasses SRV lookup issues on Render
+        try:
+            # Extract components from SRV string
+            # mongodb+srv://user:pass@cluster0.ocdzblf.mongodb.net/db?...
+            uri_parts = MONGO_URI.replace("mongodb+srv://", "mongodb://")
+            
+            # For your specific cluster, the direct nodes would be:
+            # cluster0-shard-00-00.ocdzblf.mongodb.net:27017
+            # cluster0-shard-00-01.ocdzblf.mongodb.net:27017
+            # cluster0-shard-00-02.ocdzblf.mongodb.net:27017
+            
+            direct_uri = uri_parts.replace(
+                "cluster0.ocdzblf.mongodb.net",
+                "cluster0-shard-00-00.ocdzblf.mongodb.net:27017,cluster0-shard-00-01.ocdzblf.mongodb.net:27017,cluster0-shard-00-02.ocdzblf.mongodb.net:27017"
+            )
+            
+            # Add replicaSet parameter if missing
+            if "replicaSet=" not in direct_uri:
+                separator = "&" if "?" in direct_uri else "?"
+                direct_uri += f"{separator}replicaSet=atlas-xyz-shard-0&ssl=true"
+            
+            client = MongoClient(
+                direct_uri,
+                tls=True,
+                tlsCAFile=certifi.where(),
+                serverSelectionTimeoutMS=30000,
+                connectTimeoutMS=20000,
+            )
+            client.admin.command('ping')
+            logger.info("✅ MongoDB connected via fallback direct URI!")
+            return client
+            
+        except Exception as fallback_error:
+            logger.error(f"Fallback also failed: {fallback_error}")
+            raise
 
-    db = client.get_default_database()
-    
-    # Ensure indexes for performance
-    db.vip_users.create_index([("telegram_id", ASCENDING), ("channel_type", ASCENDING)], unique=True)
-    db.vip_users.create_index([("expires_at", ASCENDING)])
-    db.vip_users.create_index([("is_active", ASCENDING)])
-    db.leads.create_index([("telegram_id", ASCENDING)], unique=True)
-    db.leads.create_index([("started_at", ASCENDING)])
-    
-    return db
-
-# Initialize globally — app will crash on startup if DB is unreachable
-db = init_mongodb()
+# Initialize MongoDB
+mongo_client = build_mongo_client()
+db = mongo_client["jay_empire_db"]
 users_col = db["vip_users"]
 leads_col = db["leads"]
+
+# Create indexes
+users_col.create_index([("telegram_id", ASCENDING), ("channel_type", ASCENDING)], unique=True)
+users_col.create_index([("expires_at", ASCENDING)])
+users_col.create_index([("is_active", ASCENDING)])
+leads_col.create_index([("telegram_id", ASCENDING)], unique=True)
 
 # ==============================================================================
 # TELEGRAM BOT SETUP
@@ -99,12 +134,11 @@ leads_col = db["leads"]
 telegram_app = Application.builder().token(BOT_TOKEN).build()
 
 async def start_cmd(update: Update, context):
-    """Handle /start command — log lead and show Mini App."""
+    """Handle /start command."""
     user = update.effective_user
     if not user:
         return
 
-    # Log lead
     try:
         leads_col.update_one(
             {"telegram_id": user.id},
@@ -120,17 +154,15 @@ async def start_cmd(update: Update, context):
             },
             upsert=True
         )
-        logger.info(f"Lead logged: {user.id}")
     except Exception as e:
         logger.error(f"Lead logging error: {e}")
 
-    # Send Mini App button
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("👑 Launch VIP Terminal App", web_app=WebAppInfo(url=MINI_APP_URL))]
     ])
     await update.message.reply_text(
         "<b>Welcome to Jay Empire VIP Terminal 👑</b>\n\n"
-        "Tap below to launch the VIP Mini App directly:",
+        "Tap below to launch the VIP Mini App:",
         parse_mode="HTML",
         reply_markup=kb
     )
@@ -138,80 +170,87 @@ async def start_cmd(update: Update, context):
 telegram_app.add_handler(CommandHandler("start", start_cmd))
 
 # ==============================================================================
-# SUBSCRIPTION MANAGEMENT FUNCTIONS
+# SUBSCRIPTION MANAGEMENT
 # ==============================================================================
-async def kick_user_from_group(user_id: int, group_id: str, channel_type: str):
+async def kick_from_channel(user_id: int, channel_id: str, channel_type: str):
     """
-    Ban then unban user — this removes them from group/channel
-    but allows rejoining after payment.
+    Ban then unban user from channel/group.
+    Ban removes them; unban allows rejoining after payment.
     """
     bot = Bot(token=BOT_TOKEN)
+    channel_name = "JAY GOLD MASTER VIP" if channel_type == "gold" else "JAY FX PREMIUM SIGNALS"
+    
     try:
-        # Ban removes from group
-        await bot.ban_chat_member(chat_id=group_id, user_id=user_id)
-        # Unban immediately so they can rejoin via invite link after paying
-        await bot.unban_chat_member(chat_id=group_id, user_id=user_id)
+        # Ban removes user from channel
+        await bot.ban_chat_member(chat_id=channel_id, user_id=user_id)
+        # Unban immediately so they can rejoin via invite link
+        await bot.unban_chat_member(chat_id=channel_id, user_id=user_id)
         
-        channel_name = "JAY GOLD MASTER VIP" if channel_type == "gold" else "JAY FX PREMIUM SIGNALS"
         await bot.send_message(
             chat_id=user_id,
             text=(
                 f"⚠️ <b>Your {channel_name} access has expired.</b>\n\n"
-                f"You've been removed from the group. Renew via the VIP Terminal to regain access."
+                f"You've been removed from the channel. "
+                f"Renew via the VIP Terminal to regain access."
             ),
             parse_mode="HTML"
         )
-        logger.info(f"Kicked user {user_id} from {channel_type} group")
+        logger.info(f"Kicked user {user_id} from {channel_type}")
         return True
     except Exception as e:
         logger.error(f"Failed to kick user {user_id}: {e}")
         return False
 
-async def send_renewal_reminder(user_id: int, channel_type: str, days_left: int):
-    """Send 3-day expiry reminder."""
+async def send_reminder(user_id: int, channel_type: str, days_left: int):
+    """Send renewal reminder."""
     bot = Bot(token=BOT_TOKEN)
     channel_name = "JAY GOLD MASTER VIP" if channel_type == "gold" else "JAY FX PREMIUM SIGNALS"
+    
     try:
         kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("👑 Renew VIP Access", web_app=WebAppInfo(url=MINI_APP_URL))]
+            [InlineKeyboardButton("👑 Renew Now", web_app=WebAppInfo(url=MINI_APP_URL))]
         ])
         await bot.send_message(
             chat_id=user_id,
             text=(
                 f"⏰ <b>{channel_name} Renewal Reminder</b>\n\n"
-                f"Your access expires in <b>{days_left} day(s)</b>.\n\n"
-                f"Renew now to avoid automatic removal from the group."
+                f"Your access expires in <b>{days_left} day(s)</b>.\n"
+                f"Renew now to avoid automatic removal."
             ),
             parse_mode="HTML",
             reply_markup=kb
         )
-        logger.info(f"Reminder sent to {user_id}")
         return True
     except Exception as e:
-        logger.error(f"Failed to send reminder to {user_id}: {e}")
+        logger.error(f"Reminder failed for {user_id}: {e}")
         return False
 
 # ==============================================================================
-# DAILY CRON JOB — CALL THIS FROM RENDER CRON OR EXTERNAL SCHEDULER
+# DAILY CHECKS — CALLED BY CRON JOB
 # ==============================================================================
 async def run_daily_checks():
     """
-    Run all daily subscription and lead checks.
-    Call this via POST /cron/daily-check daily at 9 AM UTC.
+    Run all daily subscription checks.
+    Call via POST /cron/daily-check or Render Cron Job.
     """
     now = datetime.utcnow()
-    results = {"reminders_sent": 0, "users_kicked": 0, "leads_followed": 0, "errors": []}
+    results = {
+        "reminders_sent": 0,
+        "users_kicked": 0,
+        "leads_followed": 0,
+        "errors": []
+    }
 
-    # ─── 1. Follow up unconverted leads (48h+) ────────────────────
+    # 1. Follow up unconverted leads (48h+)
     try:
         lead_cutoff = now - timedelta(hours=48)
-        unconverted_leads = leads_col.find({
+        unconverted = leads_col.find({
             "converted": False,
             "followup_sent": False,
             "started_at": {"$lte": lead_cutoff}
         })
         
-        for lead in unconverted_leads:
+        for lead in unconverted:
             try:
                 kb = InlineKeyboardMarkup([
                     [InlineKeyboardButton("👑 Enter VIP Terminal", web_app=WebAppInfo(url=MINI_APP_URL))]
@@ -220,8 +259,8 @@ async def run_daily_checks():
                     chat_id=lead["telegram_id"],
                     text=(
                         "👑 <b>Jay Empire VIP Market Alert</b>\n\n"
-                        "High-precision trade setups are active right now. "
-                        "Don't miss the next execution wave.\n\n"
+                        "High-precision trade setups are active now. "
+                        "Don't miss the next wave.\n\n"
                         "Tap below to lock in your membership:"
                     ),
                     parse_mode="HTML",
@@ -233,71 +272,60 @@ async def run_daily_checks():
                 )
                 results["leads_followed"] += 1
             except Exception as e:
-                logger.error(f"Lead follow-up error {lead['telegram_id']}: {e}")
+                logger.error(f"Lead follow-up error: {e}")
                 results["errors"].append(f"lead_{lead['telegram_id']}: {str(e)}")
     except Exception as e:
-        logger.error(f"DB error checking leads: {e}")
+        logger.error(f"DB error (leads): {e}")
         results["errors"].append(f"leads_query: {str(e)}")
 
-    # ─── 2. Send 3-day expiry reminders ───────────────────────────
+    # 2. Send 3-day expiry reminders
     try:
         reminder_target = now + timedelta(days=3)
-        expiring_soon = users_col.find({
+        expiring = users_col.find({
             "is_active": True,
             "reminder_sent": False,
             "expires_at": {"$lte": reminder_target, "$gt": now}
         })
         
-        for user in expiring_soon:
-            days_left = (user["expires_at"] - now).days
-            success = await send_renewal_reminder(
-                user["telegram_id"], 
-                user["channel_type"], 
-                max(days_left, 1)
-            )
-            if success:
+        for user in expiring:
+            days_left = max((user["expires_at"] - now).days, 1)
+            if await send_reminder(user["telegram_id"], user["channel_type"], days_left):
                 users_col.update_one(
                     {"_id": user["_id"]},
                     {"$set": {"reminder_sent": True}}
                 )
                 results["reminders_sent"] += 1
     except Exception as e:
-        logger.error(f"DB error checking renewals: {e}")
-        results["errors"].append(f"renewals: {str(e)}")
+        logger.error(f"DB error (reminders): {e}")
+        results["errors"].append(f"reminders: {str(e)}")
 
-    # ─── 3. Kick expired users from groups ────────────────────────
+    # 3. Kick expired users
     try:
-        expired_users = users_col.find({
+        expired = users_col.find({
             "is_active": True,
             "expires_at": {"$lte": now}
         })
         
-        for user in expired_users:
-            group_id = GOLD_GROUP_ID if user["channel_type"] == "gold" else FOREX_GROUP_ID
+        for user in expired:
+            channel_id = GOLD_CHANNEL_ID if user["channel_type"] == "gold" else FOREX_CHANNEL_ID
             
-            # Kick from Telegram group
-            await kick_user_from_group(user["telegram_id"], group_id, user["channel_type"])
-            
-            # Mark as inactive in DB
-            users_col.update_one(
-                {"_id": user["_id"]},
-                {"$set": {"is_active": False, "kicked_at": now}}
-            )
-            results["users_kicked"] += 1
+            if await kick_from_channel(user["telegram_id"], channel_id, user["channel_type"]):
+                users_col.update_one(
+                    {"_id": user["_id"]},
+                    {"$set": {"is_active": False, "kicked_at": now}}
+                )
+                results["users_kicked"] += 1
     except Exception as e:
-        logger.error(f"DB error checking expirations: {e}")
-        results["errors"].append(f"expirations: {str(e)}")
+        logger.error(f"DB error (expired): {e}")
+        results["errors"].append(f"expired: {str(e)}")
 
     logger.info(f"Daily check complete: {results}")
     return results
 
-# ==============================================================================
-# BACKGROUND SCHEDULER (Falls back if cron job fails)
-# ==============================================================================
+# Background scheduler fallback
 async def scheduler_loop():
-    """Background loop — runs every 24 hours as backup."""
     while True:
-        await asyncio.sleep(86400)  # 24 hours
+        await asyncio.sleep(86400)
         await run_daily_checks()
 
 # ==============================================================================
@@ -308,11 +336,10 @@ async def lifespan(app: FastAPI):
     await telegram_app.initialize()
     await telegram_app.start()
     
-    # Set webhook
     webhook_target = f"{RENDER_URL.rstrip('/')}/telegram-webhook"
     bot = Bot(token=BOT_TOKEN)
     await bot.set_webhook(url=webhook_target)
-    logger.info(f"Webhook set to: {webhook_target}")
+    logger.info(f"Webhook set: {webhook_target}")
     
     # Start background scheduler as backup
     asyncio.create_task(scheduler_loop())
@@ -329,7 +356,6 @@ app = FastAPI(lifespan=lifespan)
 
 @app.get("/")
 async def health_check():
-    """Root health check."""
     return {
         "status": "active",
         "service": "Jay Empire VIP Backend",
@@ -338,7 +364,7 @@ async def health_check():
 
 @app.get("/health/db")
 async def health_db():
-    """Deep health check — verifies MongoDB connectivity."""
+    """Deep health check — verifies MongoDB."""
     try:
         db.command("ping")
         return {
@@ -348,14 +374,14 @@ async def health_db():
         }
     except Exception as e:
         logger.error(f"Health check failed: {e}")
-        raise HTTPException(status_code=503, detail=f"Database unreachable: {str(e)}")
+        return JSONResponse(
+            {"status": "unhealthy", "mongodb": str(e)},
+            status_code=503
+        )
 
 @app.post("/cron/daily-check")
 async def cron_daily_check():
-    """
-    External cron endpoint.
-    Call this daily via Render Cron Job or UptimeRobot.
-    """
+    """External cron endpoint."""
     results = await run_daily_checks()
     return JSONResponse({
         "status": "completed",
@@ -365,7 +391,6 @@ async def cron_daily_check():
 
 @app.post("/telegram-webhook")
 async def telegram_webhook(request: Request):
-    """Receive Telegram updates."""
     data = await request.json()
     update = Update.de_json(data, telegram_app.bot)
     await telegram_app.process_update(update)
@@ -373,9 +398,6 @@ async def telegram_webhook(request: Request):
 
 @app.post("/paystack-webhook")
 async def paystack_webhook(request: Request):
-    """
-    Receive Paystack payment confirmations.
-    """
     payload = await request.json()
     
     if payload.get("event") == "charge.success":
@@ -387,14 +409,14 @@ async def paystack_webhook(request: Request):
         days = int(metadata.get("days", 30))
         
         if not tg_id or tg_id == 0:
-            logger.warning("Paystack webhook missing telegram_id")
+            logger.warning("Missing telegram_id in webhook")
             return {"status": "ignored"}
         
         now = datetime.utcnow()
         expires_at = now + timedelta(days=days)
         
-        # Upsert VIP user
         try:
+            # Upsert VIP user
             users_col.update_one(
                 {"telegram_id": tg_id, "channel_type": channel_type},
                 {
@@ -411,16 +433,16 @@ async def paystack_webhook(request: Request):
                 upsert=True
             )
             
-            # Mark lead as converted
+            # Mark lead converted
             leads_col.update_one(
                 {"telegram_id": tg_id},
                 {"$set": {"converted": True, "converted_at": now}}
             )
             
-            logger.info(f"VIP activated: user={tg_id}, plan={channel_type}, expires={expires_at}")
+            logger.info(f"VIP activated: user={tg_id}, plan={channel_type}")
         except Exception as e:
-            logger.error(f"Database update failed: {e}")
-            return JSONResponse({"status": "error", "detail": str(e)}, status_code=500)
+            logger.error(f"DB update failed: {e}")
+            return JSONResponse({"status": "error"}, status_code=500)
         
         # Send access link
         bot = Bot(token=BOT_TOKEN)
@@ -438,13 +460,13 @@ async def paystack_webhook(request: Request):
                     f"Plan: <b>{channel_type.upper()}</b>\n"
                     f"Duration: <b>{days} days</b>\n"
                     f"Expires: <b>{expires_at.strftime('%B %d, %Y')}</b>\n\n"
-                    f"Tap below to join immediately:"
+                    f"Tap below to join:"
                 ),
                 parse_mode="HTML",
                 reply_markup=btn
             )
         except Exception as e:
-            logger.error(f"Failed to send access message to {tg_id}: {e}")
+            logger.error(f"Failed to notify {tg_id}: {e}")
 
     return {"status": "success"}
 
