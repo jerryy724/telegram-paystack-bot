@@ -8,21 +8,19 @@ services:
     envVars:
       - key: PYTHONUNBUFFERED
         value: "1"
-      - key: MONGO_URI
-        sync: false
       - key: BOT_TOKEN
         sync: false
       - key: PAYSTACK_SECRET_KEY
         sync: false
-      - key: PAYSTACK_PUBLIC_KEY
+      - key: MONGO_URI
         sync: false
       - key: RENDER_EXTERNAL_URL
         sync: false
       - key: MINI_APP_URL
         sync: false
-      - key: GOLD_GROUP_ID
+      - key: GOLD_CHANNEL_ID
         sync: false
-      - key: FOREX_GROUP_ID
+      - key: FOREX_CHANNEL_ID
         sync: false
 
   - type: cron
@@ -30,7 +28,7 @@ services:
     runtime: python
     plan: free
     buildCommand: pip install -r requirements.txt
-    schedule: "0 9 * * *"  # 9 AM UTC daily
+    schedule: "0 9 * * *"
     startCommand: |
       python -c "
       import asyncio
@@ -38,11 +36,13 @@ services:
       asyncio.run(run_daily_checks())
       "
     envVars:
-      - key: MONGO_URI
-        sync: false
       - key: BOT_TOKEN
         sync: false
-      - key: GOLD_GROUP_ID
+      - key: MONGO_URI
         sync: false
-      - key: FOREX_GROUP_ID
+      - key: GOLD_CHANNEL_ID
+        sync: false
+      - key: FOREX_CHANNEL_ID
+        sync: false
+      - key: PAYSTACK_SECRET_KEY
         sync: false
