@@ -14,8 +14,6 @@ services:
         sync: false
       - key: MONGO_URI
         sync: false
-      - key: ADMIN_API_KEY
-        sync: false
       - key: RENDER_EXTERNAL_URL
         sync: false
       - key: MINI_APP_URL
@@ -23,4 +21,6 @@ services:
       - key: GOLD_CHANNEL_ID
         sync: false
       - key: FOREX_CHANNEL_ID
+        sync: false
+      - key: ADMIN_TELEGRAM_ID        # ← NEW
         sync: false
