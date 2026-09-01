@@ -21,7 +21,7 @@ from fastapi.responses import JSONResponse
 from pymongo import MongoClient, ASCENDING
 from pymongo.server_api import ServerApi
 from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo, Update
-from telegram.ext import Application, CommandHandler
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler
 
 # ==============================================================================
 # LOGGING
@@ -211,19 +211,24 @@ async def start_cmd(update: Update, context):
             logger.error(f"Lead logging error: {e}")
 
     # Check if already affiliate
-    is_affiliate = affiliates_col.find_one({"telegram_id": chat_id, "is_active": True}) if affiliates_col else None
+    # FIX: Use explicit None comparison instead of truthiness
+    is_affiliate = None
+    if affiliates_col is not None:
+        is_affiliate = affiliates_col.find_one({"telegram_id": chat_id, "is_active": True})
 
     kb = [[InlineKeyboardButton("Launch VIP Terminal App", web_app=WebAppInfo(url=MINI_APP_URL))]]
 
-    if not is_affiliate:
+    if is_affiliate is None:
         kb.append([InlineKeyboardButton("Become an Affiliate", callback_data="affiliate_start")])
     else:
         kb.append([InlineKeyboardButton("My Affiliate Dashboard", callback_data="affiliate_dashboard")])
         # Check milestone
-        active_refs = referrals_col.count_documents({
-            "affiliate_id": is_affiliate["_id"],
-            "is_active": True
-        }) if referrals_col else 0
+        active_refs = 0
+        if referrals_col is not None:
+            active_refs = referrals_col.count_documents({
+                "affiliate_id": is_affiliate["_id"],
+                "is_active": True
+            })
         if active_refs >= REFERRAL_MILESTONE and not is_affiliate.get("milestone_notified"):
             await notify_milestone(update, is_affiliate, active_refs)
 
@@ -243,15 +248,27 @@ async def notify_milestone(update, affiliate, count):
             f"Your code: <code>{affiliate['ref_code']}</code>",
             parse_mode="HTML"
         )
-        affiliates_col.update_one(
-            {"_id": affiliate["_id"]},
-            {"$set": {"milestone_notified": True, "milestone_reached_at": datetime.utcnow()}}
-        )
+        if affiliates_col is not None:
+            affiliates_col.update_one(
+                {"_id": affiliate["_id"]},
+                {"$set": {"milestone_notified": True, "milestone_reached_at": datetime.utcnow()}}
+            )
         logger.info(f"Milestone notified for affiliate: {affiliate['ref_code']}")
     except Exception as e:
         logger.error(f"Milestone notify error: {e}")
 
+# FIX: Added CallbackQueryHandler so inline buttons actually work
+async def callback_handler(update: Update, context):
+    query = update.callback_query
+    await query.answer()
+    chat_id = query.message.chat.id
+    action = query.data
+    username = query.from_user.username or ""
+
+    await handle_affiliate_callback(chat_id, action, username)
+
 telegram_app.add_handler(CommandHandler("start", start_cmd))
+telegram_app.add_handler(CallbackQueryHandler(callback_handler))
 
 # ==============================================================================
 # AFFILIATE CALLBACKS
@@ -286,11 +303,17 @@ async def handle_affiliate_callback(chat_id, action, username=""):
         )
 
     elif action == "affiliate_dashboard":
-        aff = affiliates_col.find_one({"telegram_id": chat_id}) if affiliates_col else None
-        if aff:
+        # FIX: Explicit None comparison
+        aff = None
+        if affiliates_col is not None:
+            aff = affiliates_col.find_one({"telegram_id": chat_id})
+        if aff is not None:
             ref_link = f"https://t.me/JayEmpire_bot?start=ref_{aff['ref_code']}"
-            total_refs = referrals_col.count_documents({"affiliate_id": aff["_id"]}) if referrals_col else 0
-            active_refs = referrals_col.count_documents({"affiliate_id": aff["_id"], "is_active": True}) if referrals_col else 0
+            total_refs = 0
+            active_refs = 0
+            if referrals_col is not None:
+                total_refs = referrals_col.count_documents({"affiliate_id": aff["_id"]})
+                active_refs = referrals_col.count_documents({"affiliate_id": aff["_id"], "is_active": True})
 
             milestone = "UNLOCKED!" if active_refs >= REFERRAL_MILESTONE else f"({active_refs}/{REFERRAL_MILESTONE})"
 
@@ -320,8 +343,11 @@ async def handle_affiliate_callback(chat_id, action, username=""):
         )
 
     elif action == "affiliate_bank_info":
-        aff = affiliates_col.find_one({"telegram_id": chat_id}) if affiliates_col else None
-        if aff:
+        # FIX: Explicit None comparison
+        aff = None
+        if affiliates_col is not None:
+            aff = affiliates_col.find_one({"telegram_id": chat_id})
+        if aff is not None:
             b = aff.get("bank_details", {})
             await bot.send_message(
                 chat_id=chat_id,
@@ -330,9 +356,12 @@ async def handle_affiliate_callback(chat_id, action, username=""):
             )
 
     elif action == "back_main":
-        is_aff = affiliates_col.find_one({"telegram_id": chat_id, "is_active": True}) if affiliates_col else None
+        # FIX: Explicit None comparison
+        is_aff = None
+        if affiliates_col is not None:
+            is_aff = affiliates_col.find_one({"telegram_id": chat_id, "is_active": True})
         kb = [[InlineKeyboardButton("Launch VIP Terminal", web_app=WebAppInfo(url=MINI_APP_URL))]]
-        if not is_aff:
+        if is_aff is None:
             kb.append([InlineKeyboardButton("Become an Affiliate", callback_data="affiliate_start")])
         else:
             kb.append([InlineKeyboardButton("My Affiliate Dashboard", callback_data="affiliate_dashboard")])
@@ -379,6 +408,7 @@ async def send_reminder(user_id: int, channel_type: str, days_left: int):
 # DAILY CHECKS
 # ==============================================================================
 async def run_daily_checks():
+    # FIX: Explicit None comparison instead of truthiness
     if users_col is None or leads_col is None:
         logger.error("DB not available")
         return {"error": "DB not connected"}
@@ -475,13 +505,15 @@ app = FastAPI(lifespan=lifespan)
 async def health():
     return {
         "status": "active",
-        "mongodb": "connected" if db else "disconnected",
+        # FIX: Explicit None comparison
+        "mongodb": "connected" if db is not None else "disconnected",
         "service": "Jay Empire VIP + Affiliate",
         "timestamp": datetime.utcnow().isoformat()
     }
 
 @app.get("/health/db")
 async def health_db():
+    # FIX: Explicit None comparison
     if db is None:
         return JSONResponse({"status": "unhealthy"}, status_code=503)
     try:
@@ -543,7 +575,7 @@ async def telegram_webhook(request: Request):
             subaccount = await create_paystack_subaccount(
                 d["full_name"], d["bank_code"], d["account_number"], COMMISSION_FIRST_SALE
             )
-            if not subaccount:
+            if subaccount is None:
                 await Bot(token=BOT_TOKEN).send_message(
                     chat_id=chat_id,
                     text="Failed to create payout account. Contact @jay_empire247."
@@ -571,7 +603,7 @@ async def telegram_webhook(request: Request):
                 "created_at": datetime.utcnow()
             }
 
-            if affiliates_col:
+            if affiliates_col is not None:
                 affiliates_col.insert_one(aff_doc)
 
             ref_link = f"https://t.me/JayEmpire_bot?start=ref_{ref_code}"
@@ -599,6 +631,7 @@ async def telegram_webhook(request: Request):
         text = data["message"]["text"]
 
         if text.startswith("/"):
+            # FIX: Process commands through the dispatcher properly
             update = Update.de_json(data, telegram_app.bot)
             await telegram_app.process_update(update)
             return {"status": "ok"}
@@ -628,7 +661,7 @@ async def telegram_webhook(request: Request):
                 state["data"]["account_number"] = text
                 state["step"] = "awaiting_confirmation"
                 acc_name = await verify_bank_account(text, state["data"]["bank_code"])
-                if acc_name:
+                if acc_name is not None:
                     state["data"]["account_name"] = acc_name
                     kb = [
                         [InlineKeyboardButton("Confirm and Create", callback_data="affiliate_confirm")],
@@ -645,7 +678,8 @@ async def telegram_webhook(request: Request):
                     state["step"] = "awaiting_account_number"
                 return {"status": "ok"}
 
-    # Commands via python-telegram-bot
+    # Fallback: process any other updates through python-telegram-bot dispatcher
+    # FIX: This ensures all updates (including commands) are properly handled
     update = Update.de_json(data, telegram_app.bot)
     await telegram_app.process_update(update)
     return {"status": "ok"}
@@ -661,7 +695,7 @@ async def paystack_webhook(request: Request, x_paystack_signature: str = Header(
     body = await request.body()
     expected = hmac.new(PAYSTACK_SECRET.encode(), body, hashlib.sha512).hexdigest()
 
-    if not x_paystack_signature or not hmac.compare_digest(expected, x_paystack_signature):
+    if x_paystack_signature is None or not hmac.compare_digest(expected, x_paystack_signature):
         raise HTTPException(status_code=401, detail="Invalid signature")
 
     try:
@@ -685,7 +719,7 @@ async def paystack_webhook(request: Request, x_paystack_signature: str = Header(
             now = datetime.utcnow()
             expires = now + timedelta(days=days)
 
-            if users_col:
+            if users_col is not None:
                 # Upsert user
                 users_col.update_one(
                     {"telegram_id": tg_id, "channel_type": channel_type},
@@ -709,15 +743,16 @@ async def paystack_webhook(request: Request, x_paystack_signature: str = Header(
                 )
 
                 # Mark lead converted
-                leads_col.update_one(
-                    {"telegram_id": tg_id},
-                    {"$set": {"converted": True, "converted_at": now, "converted_channel": channel_type}}
-                )
+                if leads_col is not None:
+                    leads_col.update_one(
+                        {"telegram_id": tg_id},
+                        {"$set": {"converted": True, "converted_at": now, "converted_channel": channel_type}}
+                    )
 
                 # AFFILIATE TRACKING
-                if ref_code and affiliates_col and referrals_col:
+                if ref_code and affiliates_col is not None and referrals_col is not None:
                     affiliate = affiliates_col.find_one({"ref_code": ref_code, "is_active": True})
-                    if affiliate:
+                    if affiliate is not None:
                         rate = COMMISSION_RENEWAL if is_renewal else COMMISSION_FIRST_SALE
                         amount = data.get("amount", 0)
                         commission = int(amount * rate / 100)
@@ -787,6 +822,7 @@ async def paystack_webhook(request: Request, x_paystack_signature: str = Header(
 
 @app.get("/admin/users")
 async def admin_users():
+    # FIX: Explicit None comparison
     if users_col is None:
         return JSONResponse({"error": "DB offline"}, status_code=503)
     users = list(users_col.find({}, {"_id": 0}))
@@ -799,6 +835,7 @@ async def admin_users():
 
 @app.get("/admin/leads")
 async def admin_leads():
+    # FIX: Explicit None comparison
     if leads_col is None:
         return JSONResponse({"error": "DB offline"}, status_code=503)
     leads = list(leads_col.find({}, {"_id": 0}))
@@ -811,6 +848,7 @@ async def admin_leads():
 
 @app.get("/admin/affiliates")
 async def admin_affiliates():
+    # FIX: Explicit None comparison
     if affiliates_col is None:
         return JSONResponse({"error": "DB offline"}, status_code=503)
     affs = list(affiliates_col.find({}, {"_id": 0, "bank_details": 0}))
@@ -823,7 +861,8 @@ async def admin_affiliates():
 
 @app.get("/admin/dashboard")
 async def admin_dashboard():
-    if not all([users_col, leads_col, affiliates_col]):
+    # FIX: Explicit None comparison for all collections
+    if users_col is None or leads_col is None or affiliates_col is None:
         return JSONResponse({"error": "DB offline"}, status_code=503)
 
     now = datetime.utcnow()
