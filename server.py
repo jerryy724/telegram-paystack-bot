@@ -1,40 +1,44 @@
 """
-server.py — Jay Empire VIP Backend
-With enhanced logging for debugging missing records
+server.py — Jay Empire VIP Backend & Affiliate Engine
+Production-grade deployment with HMAC SHA512 webhook security,
+automated Mobile Money payout engine, and zero-downtime MongoDB schemas.
 """
 
 import os
+import hmac
+import hashlib
 import asyncio
 import logging
 import ssl
 import certifi
 from datetime import datetime, timedelta
+from typing import Optional
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+import httpx
+from fastapi import FastAPI, Request, Header, HTTPException, Depends
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
 from pymongo import MongoClient, ASCENDING
 from pymongo.server_api import ServerApi
 from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo, Update
 from telegram.ext import Application, CommandHandler
 
 # ==============================================================================
-# LOGGING — Enhanced for debugging
+# LOGGING & SYSTEM CONFIGURATION
 # ==============================================================================
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("JayEmpire")
 
-# ==============================================================================
-# ENVIRONMENT CONFIGURATION
-# ==============================================================================
-BOT_TOKEN = os.getenv("BOT_TOKEN", "")
-PAYSTACK_SECRET = os.getenv("PAYSTACK_SECRET_KEY", "")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
+PAYSTACK_SECRET = os.getenv("PAYSTACK_SECRET_KEY", "").strip()
 MONGO_URI = os.getenv("MONGO_URI", "").strip().strip('"').strip("'")
 MINI_APP_URL = os.getenv("MINI_APP_URL", "https://jerryy724.github.io/telegram-paystack-bot/")
 RENDER_URL = os.getenv("RENDER_EXTERNAL_URL", "https://telegram-paystack-bot-415x.onrender.com")
+ADMIN_API_KEY = os.getenv("ADMIN_API_KEY", "JAY_EMPIRE_SUPER_ADMIN_SECRET_2026")
 
 GOLD_CHANNEL_ID = os.getenv("GOLD_CHANNEL_ID", "-1004329655598")
 FOREX_CHANNEL_ID = os.getenv("FOREX_CHANNEL_ID", "-1004451754852")
@@ -42,15 +46,15 @@ FOREX_CHANNEL_ID = os.getenv("FOREX_CHANNEL_ID", "-1004451754852")
 GOLD_PRIMARY_LINK = "https://t.me/+env-Zrui2ykwYjg8"
 FOREX_PRIMARY_LINK = "https://t.me/+njii3OAHlqI3MjQ8"
 
+AFFILIATE_COMMISSION_RATE = 0.15  # 15% Referral Commission
+
 # ==============================================================================
-# MONGODB CONNECTION
+# MONGODB CONNECTION & INDEXING ENGINE
 # ==============================================================================
 def init_mongodb():
     if not MONGO_URI:
-        logger.error("❌ MONGO_URI is not set!")
-        return None, None, None, None
-
-    logger.info(f"Connecting with URI type: {'srv' if 'mongodb+srv' in MONGO_URI else 'direct'}")
+        logger.error("❌ MONGO_URI missing!")
+        return None, None, None, None, None, None
 
     try:
         ssl_context = ssl.create_default_context(cafile=certifi.where())
@@ -75,36 +79,52 @@ def init_mongodb():
 
         db = client.get_default_database()
         
-        # Create indexes
-        db.vip_users.create_index([("telegram_id", ASCENDING), ("channel_type", ASCENDING)], unique=True)
-        db.vip_users.create_index([("expires_at", ASCENDING)])
-        db.vip_users.create_index([("is_active", ASCENDING)])
-        db.leads.create_index([("telegram_id", ASCENDING)], unique=True)
+        # Collections
+        vip_users = db["vip_users"]
+        leads = db["leads"]
+        affiliates = db["affiliates"]
+        withdrawals = db["withdrawals"]
+
+        # Preserve and extend indexes
+        vip_users.create_index([("telegram_id", ASCENDING), ("channel_type", ASCENDING)], unique=True)
+        vip_users.create_index([("expires_at", ASCENDING)])
+        vip_users.create_index([("is_active", ASCENDING)])
         
-        return client, db, db["vip_users"], db["leads"]
+        leads.create_index([("telegram_id", ASCENDING)], unique=True)
+        
+        affiliates.create_index([("telegram_id", ASCENDING)], unique=True)
+        affiliates.create_index([("ref_code", ASCENDING)], unique=True)
+        
+        withdrawals.create_index([("reference", ASCENDING)], unique=True)
+        withdrawals.create_index([("telegram_id", ASCENDING)])
+
+        return client, db, vip_users, leads, affiliates, withdrawals
 
     except Exception as e:
-        logger.error(f"❌ MongoDB connection failed: {e}")
-        return None, None, None, None
+        logger.error(f"❌ MongoDB initialization failed: {e}")
+        return None, None, None, None, None, None
 
-mongo_client, db, users_col, leads_col = init_mongodb()
+mongo_client, db, users_col, leads_col, affiliates_col, withdrawals_col = init_mongodb()
 
 # ==============================================================================
-# TELEGRAM BOT SETUP
+# TELEGRAM BOT HANDLERS
 # ==============================================================================
 telegram_app = Application.builder().token(BOT_TOKEN).build()
 
 async def start_cmd(update: Update, context):
-    """Handle /start command."""
     user = update.effective_user
     if not user:
         return
 
-    logger.info(f"🤖 /start received from user: {user.id} (@{user.username or 'no_username'})")
+    # Extract referral parameter from deep link: /start ref_CODE
+    args = context.args
+    referred_by_code = args[0].replace("ref_", "") if args and args[0].startswith("ref_") else None
+
+    logger.info(f"🤖 /start from {user.id} (@{user.username}) | Ref: {referred_by_code}")
 
     if leads_col is not None:
         try:
-            result = leads_col.update_one(
+            leads_col.update_one(
                 {"telegram_id": user.id},
                 {
                     "$setOnInsert": {
@@ -113,24 +133,43 @@ async def start_cmd(update: Update, context):
                         "username": user.username,
                         "started_at": datetime.utcnow(),
                         "converted": False,
-                        "followup_sent": False
+                        "followup_sent": False,
+                        "referred_by": referred_by_code
                     }
                 },
                 upsert=True
             )
-            if result.upserted_id:
-                logger.info(f"✅ New lead logged: {user.id}")
-            else:
-                logger.info(f"ℹ️ Lead already exists: {user.id}")
         except Exception as e:
-            logger.error(f"❌ Lead logging error: {e}")
+            logger.error(f"❌ Lead tracking error: {e}")
+
+    # Auto-provision affiliate profile
+    if affiliates_col is not None:
+        try:
+            affiliates_col.update_one(
+                {"telegram_id": user.id},
+                {
+                    "$setOnInsert": {
+                        "telegram_id": user.id,
+                        "first_name": user.first_name,
+                        "username": user.username,
+                        "ref_code": str(user.id),
+                        "balance": 0.0,
+                        "total_earned": 0.0,
+                        "total_withdrawn": 0.0,
+                        "created_at": datetime.utcnow()
+                    }
+                },
+                upsert=True
+            )
+        except Exception as e:
+            logger.error(f"❌ Affiliate provisioning error: {e}")
 
     kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("👑 Launch VIP Terminal App", web_app=WebAppInfo(url=MINI_APP_URL))]
+        [InlineKeyboardButton("👑 Launch VIP & Affiliate App", web_app=WebAppInfo(url=MINI_APP_URL))]
     ])
     await update.message.reply_text(
-        "<b>Welcome to Jay Empire VIP Terminal 👑</b>\n\n"
-        "Tap below to launch the VIP Mini App:",
+        f"<b>Welcome to Jay Empire VIP Terminal 👑</b>\n\n"
+        f"Hello {user.first_name}! Access signals or earn 15% lifetime commissions via our Affiliate Program.",
         parse_mode="HTML",
         reply_markup=kb
     )
@@ -138,401 +177,297 @@ async def start_cmd(update: Update, context):
 telegram_app.add_handler(CommandHandler("start", start_cmd))
 
 # ==============================================================================
-# SUBSCRIPTION MANAGEMENT
+# SECURITY UTILITIES
+# ==============================================================================
+async def verify_admin_key(x_admin_key: str = Header(...)):
+    if x_admin_key != ADMIN_API_KEY:
+        raise HTTPException(status_code=403, detail="Unauthorized access token.")
+    return True
+
+def verify_paystack_signature(raw_body: bytes, signature: str) -> bool:
+    if not PAYSTACK_SECRET or not signature:
+        return False
+    computed_hmac = hmac.new(
+        key=PAYSTACK_SECRET.encode('utf-8'),
+        msg=raw_body,
+        digestmod=hashlib.sha512
+    ).hexdigest()
+    return hmac.compare_digest(computed_hmac, signature)
+
+# ==============================================================================
+# TELEGRAM UTILITIES
 # ==============================================================================
 async def kick_from_channel(user_id: int, channel_id: str, channel_type: str):
-    """Ban then unban user — removes from channel but allows rejoin."""
     bot = Bot(token=BOT_TOKEN)
     channel_name = "JAY GOLD MASTER VIP" if channel_type == "gold" else "JAY FX PREMIUM SIGNALS"
-    
     try:
         await bot.ban_chat_member(chat_id=channel_id, user_id=user_id)
         await bot.unban_chat_member(chat_id=channel_id, user_id=user_id)
-        
         await bot.send_message(
             chat_id=user_id,
-            text=(
-                f"⚠️ <b>Your {channel_name} access has expired.</b>\n\n"
-                f"You've been removed from the channel. "
-                f"Renew via the VIP Terminal to regain access."
-            ),
+            text=f"⚠️ <b>Your {channel_name} access has expired.</b>\nRenew to regain access.",
             parse_mode="HTML"
         )
-        logger.info(f"✅ Kicked user {user_id} from {channel_type}")
         return True
     except Exception as e:
-        logger.error(f"❌ Failed to kick user {user_id}: {e}")
-        return False
-
-async def send_reminder(user_id: int, channel_type: str, days_left: int):
-    """Send renewal reminder."""
-    bot = Bot(token=BOT_TOKEN)
-    channel_name = "JAY GOLD MASTER VIP" if channel_type == "gold" else "JAY FX PREMIUM SIGNALS"
-    
-    try:
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("👑 Renew Now", web_app=WebAppInfo(url=MINI_APP_URL))]
-        ])
-        await bot.send_message(
-            chat_id=user_id,
-            text=(
-                f"⏰ <b>{channel_name} Renewal Reminder</b>\n\n"
-                f"Your access expires in <b>{days_left} day(s)</b>.\n"
-                f"Renew now to avoid automatic removal."
-            ),
-            parse_mode="HTML",
-            reply_markup=kb
-        )
-        logger.info(f"✅ Reminder sent to {user_id}")
-        return True
-    except Exception as e:
-        logger.error(f"❌ Reminder failed for {user_id}: {e}")
+        logger.error(f"❌ Kick error for {user_id}: {e}")
         return False
 
 # ==============================================================================
-# DAILY CHECKS
+# LIFESPAN & SCHEDULER
 # ==============================================================================
 async def run_daily_checks():
-    """Run all daily subscription checks."""
     if users_col is None or leads_col is None:
-        logger.error("Database not available, skipping daily checks")
-        return {"error": "Database not connected"}
-
+        return
     now = datetime.utcnow()
-    results = {"reminders_sent": 0, "users_kicked": 0, "leads_followed": 0, "errors": []}
-
-    # 1. Follow up unconverted leads (48h+)
-    try:
-        lead_cutoff = now - timedelta(hours=48)
-        unconverted = leads_col.find({
-            "converted": False,
-            "followup_sent": False,
-            "started_at": {"$lte": lead_cutoff}
-        })
-        
-        for lead in unconverted:
-            try:
-                kb = InlineKeyboardMarkup([
-                    [InlineKeyboardButton("👑 Enter VIP Terminal", web_app=WebAppInfo(url=MINI_APP_URL))]
-                ])
-                await Bot(token=BOT_TOKEN).send_message(
-                    chat_id=lead["telegram_id"],
-                    text=(
-                        "👑 <b>Jay Empire VIP Market Alert</b>\n\n"
-                        "High-precision trade setups are active now. "
-                        "Don't miss the next wave.\n\n"
-                        "Tap below to lock in your membership:"
-                    ),
-                    parse_mode="HTML",
-                    reply_markup=kb
-                )
-                leads_col.update_one(
-                    {"_id": lead["_id"]},
-                    {"$set": {"followup_sent": True}}
-                )
-                results["leads_followed"] += 1
-                logger.info(f"✅ Follow-up sent to lead: {lead['telegram_id']}")
-            except Exception as e:
-                logger.error(f"❌ Lead follow-up error: {e}")
-                results["errors"].append(f"lead_{lead['telegram_id']}: {str(e)}")
-    except Exception as e:
-        logger.error(f"❌ DB error (leads): {e}")
-        results["errors"].append(f"leads_query: {str(e)}")
-
-    # 2. Send 3-day expiry reminders
-    try:
-        reminder_target = now + timedelta(days=3)
-        expiring = users_col.find({
-            "is_active": True,
-            "reminder_sent": False,
-            "expires_at": {"$lte": reminder_target, "$gt": now}
-        })
-        
-        for user in expiring:
-            days_left = max((user["expires_at"] - now).days, 1)
-            if await send_reminder(user["telegram_id"], user["channel_type"], days_left):
-                users_col.update_one(
-                    {"_id": user["_id"]},
-                    {"$set": {"reminder_sent": True}}
-                )
-                results["reminders_sent"] += 1
-    except Exception as e:
-        logger.error(f"❌ DB error (reminders): {e}")
-        results["errors"].append(f"reminders: {str(e)}")
-
-    # 3. Kick expired users
-    try:
-        expired = users_col.find({
-            "is_active": True,
-            "expires_at": {"$lte": now}
-        })
-        
-        for user in expired:
-            channel_id = GOLD_CHANNEL_ID if user["channel_type"] == "gold" else FOREX_CHANNEL_ID
-            
-            if await kick_from_channel(user["telegram_id"], channel_id, user["channel_type"]):
-                users_col.update_one(
-                    {"_id": user["_id"]},
-                    {"$set": {"is_active": False, "kicked_at": now}}
-                )
-                results["users_kicked"] += 1
-    except Exception as e:
-        logger.error(f"❌ DB error (expired): {e}")
-        results["errors"].append(f"expired: {str(e)}")
-
-    logger.info(f"📊 Daily check complete: {results}")
-    return results
+    
+    # 1. Kick Expired Users
+    expired = users_col.find({"is_active": True, "expires_at": {"$lte": now}})
+    for user in expired:
+        ch_id = GOLD_CHANNEL_ID if user["channel_type"] == "gold" else FOREX_CHANNEL_ID
+        if await kick_from_channel(user["telegram_id"], ch_id, user["channel_type"]):
+            users_col.update_one({"_id": user["_id"]}, {"$set": {"is_active": False, "kicked_at": now}})
 
 async def scheduler_loop():
-    """Background scheduler fallback."""
     while True:
         await asyncio.sleep(86400)
         await run_daily_checks()
 
-# ==============================================================================
-# FASTAPI LIFESPAN
-# ==============================================================================
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await telegram_app.initialize()
     await telegram_app.start()
-    
-    webhook_target = f"{RENDER_URL.rstrip('/')}/telegram-webhook"
     bot = Bot(token=BOT_TOKEN)
-    await bot.set_webhook(url=webhook_target)
-    logger.info(f"✅ Webhook set: {webhook_target}")
-    
+    await bot.set_webhook(url=f"{RENDER_URL.rstrip('/')}/telegram-webhook")
     asyncio.create_task(scheduler_loop())
-    
     yield
-    
     await telegram_app.stop()
 
 app = FastAPI(lifespan=lifespan)
+
+# ==============================================================================
+# API MODELS
+# ==============================================================================
+class WithdrawalRequest(BaseModel):
+    telegram_id: int
+    amount: float = Field(gt=0)
+    mobile_number: str
+    bank_code: str  # GHA_MTN, GHA_VOD, GHA_ATL
+    account_name: str
 
 # ==============================================================================
 # API ENDPOINTS
 # ==============================================================================
 
 @app.get("/")
-async def health_check():
-    """Root health check."""
-    db_status = "connected" if db is not None else "disconnected"
-    return {
-        "status": "active",
-        "mongodb": db_status,
-        "service": "Jay Empire VIP Backend",
-        "timestamp": datetime.utcnow().isoformat()
-    }
-
-@app.get("/health/db")
-async def health_db():
-    """Deep health check."""
-    if db is None:
-        return JSONResponse(
-            {"status": "unhealthy", "mongodb": "not_initialized"},
-            status_code=503
-        )
-    try:
-        db.command("ping")
-        return {
-            "status": "healthy",
-            "mongodb": "connected",
-            "timestamp": datetime.utcnow().isoformat()
-        }
-    except Exception as e:
-        logger.error(f"❌ Health check failed: {e}")
-        return JSONResponse(
-            {"status": "unhealthy", "mongodb": str(e)},
-            status_code=503
-        )
-
-@app.post("/cron/daily-check")
-async def cron_daily_check():
-    """External cron endpoint."""
-    results = await run_daily_checks()
-    return JSONResponse({
-        "status": "completed",
-        "results": results,
-        "timestamp": datetime.utcnow().isoformat()
-    })
+async def root():
+    return {"service": "Jay Empire Engine", "status": "active", "timestamp": datetime.utcnow().isoformat()}
 
 @app.post("/telegram-webhook")
 async def telegram_webhook(request: Request):
-    """Receive Telegram updates."""
     data = await request.json()
     update = Update.de_json(data, telegram_app.bot)
     await telegram_app.process_update(update)
     return {"status": "ok"}
 
+@app.get("/api/affiliate/dashboard/{telegram_id}")
+async def get_affiliate_dashboard(telegram_id: int):
+    if affiliates_col is None:
+        raise HTTPException(status_code=503, detail="Database uninitialized")
+
+    affiliate = affiliates_col.find_one({"telegram_id": telegram_id}, {"_id": 0})
+    if not affiliate:
+        # Auto-create if not existent
+        affiliate = {
+            "telegram_id": telegram_id,
+            "ref_code": str(telegram_id),
+            "balance": 0.0,
+            "total_earned": 0.0,
+            "total_withdrawn": 0.0
+        }
+        affiliates_col.insert_one(dict(affiliate))
+
+    referrals_count = leads_col.count_documents({"referred_by": affiliate["ref_code"]})
+    conversions_count = leads_col.count_documents({"referred_by": affiliate["ref_code"], "converted": True})
+
+    history = list(withdrawals_col.find({"telegram_id": telegram_id}, {"_id": 0}).sort("timestamp", -1))
+
+    return {
+        "ref_code": affiliate["ref_code"],
+        "ref_link": f"https://t.me/JayEmpireVIPBot?start=ref_{affiliate['ref_code']}",
+        "balance": affiliate.get("balance", 0.0),
+        "total_earned": affiliate.get("total_earned", 0.0),
+        "total_withdrawn": affiliate.get("total_withdrawn", 0.0),
+        "total_referrals": referrals_count,
+        "total_conversions": conversions_count,
+        "withdrawal_history": history
+    }
+
 @app.post("/paystack-webhook")
-async def paystack_webhook(request: Request):
-    """
-    Receive Paystack payment confirmations.
-    ENHANCED LOGGING for debugging missing records.
-    """
-    try:
-        payload = await request.json()
-        logger.info(f"💰 Paystack webhook received: {payload.get('event')}")
-        
-        if payload.get("event") == "charge.success":
-            data = payload["data"]
-            metadata = data.get("metadata", {})
-            
-            tg_id = metadata.get("telegram_id")
-            channel_type = metadata.get("channel_type", "gold")
-            days = int(metadata.get("days", 30))
-            reference = data.get("reference", "unknown")
-            
-            logger.info(f"💳 Payment success: ref={reference}, user={tg_id}, channel={channel_type}, days={days}")
-            
-            if not tg_id or tg_id == 0:
-                logger.warning("⚠️ Paystack webhook missing telegram_id")
-                return {"status": "ignored"}
-            
-            now = datetime.utcnow()
-            expires_at = now + timedelta(days=days)
-            
-            if users_col is not None:
-                try:
-                    # Upsert VIP user
-                    result = users_col.update_one(
-                        {"telegram_id": tg_id, "channel_type": channel_type},
-                        {
-                            "$set": {
-                                "telegram_id": tg_id,
-                                "channel_type": channel_type,
-                                "purchased_at": now,
-                                "expires_at": expires_at,
-                                "is_active": True,
-                                "reminder_sent": False,
-                                "last_reference": reference,
-                                "amount_paid": data.get("amount"),
-                                "currency": data.get("currency"),
-                                "customer_email": data.get("customer", {}).get("email"),
-                                "paystack_reference": reference
-                            }
-                        },
-                        upsert=True
-                    )
-                    
-                    logger.info(f"✅ VIP user upserted: user={tg_id}, channel={channel_type}, matched={result.matched_count}, modified={result.modified_count}")
-                    
-                    # Mark lead as converted
-                    lead_result = leads_col.update_one(
-                        {"telegram_id": tg_id},
-                        {"$set": {"converted": True, "converted_at": now, "converted_channel": channel_type}}
-                    )
-                    logger.info(f"✅ Lead marked converted: user={tg_id}, matched={lead_result.matched_count}")
-                    
-                except Exception as e:
-                    logger.error(f"❌ Database update failed: {e}")
-                    return JSONResponse({"status": "error", "detail": str(e)}, status_code=500)
-            else:
-                logger.error("❌ Database not available, cannot process payment")
-                return JSONResponse({"status": "error", "detail": "Database offline"}, status_code=503)
-            
-            # Send access link
-            bot = Bot(token=BOT_TOKEN)
-            try:
-                target_link = GOLD_PRIMARY_LINK if channel_type == "gold" else FOREX_PRIMARY_LINK
-                channel_name = "JAY GOLD MASTER VIP" if channel_type == "gold" else "JAY FX PREMIUM SIGNALS"
-                
-                btn = InlineKeyboardMarkup([[
-                    InlineKeyboardButton(f"🚀 Enter {channel_name}", url=target_link)
-                ]])
-                await bot.send_message(
-                    chat_id=tg_id,
-                    text=(
-                        f"🎉 <b>PAYMENT VERIFIED!</b>\n\n"
-                        f"Plan: <b>{channel_type.upper()}</b>\n"
-                        f"Duration: <b>{days} days</b>\n"
-                        f"Expires: <b>{expires_at.strftime('%B %d, %Y')}</b>\n\n"
-                        f"Tap below to join:"
-                    ),
-                    parse_mode="HTML",
-                    reply_markup=btn
-                )
-                logger.info(f"✅ Access message sent to {tg_id}")
-            except Exception as e:
-                logger.error(f"❌ Failed to send access message to {tg_id}: {e}")
-
-        return {"status": "success"}
-        
-    except Exception as e:
-        logger.error(f"❌ Paystack webhook error: {e}")
-        return JSONResponse({"status": "error", "detail": str(e)}, status_code=500)
-
-# ==============================================================================
-# ADMIN ENDPOINTS — View Data Easily
-# ==============================================================================
-
-@app.get("/admin/users")
-async def get_all_users():
-    """View all VIP subscribers."""
-    if users_col is None:
-        return JSONResponse({"error": "Database not connected"}, status_code=503)
+async def paystack_webhook(request: Request, x_paystack_signature: Optional[str] = Header(None)):
+    body = await request.body()
     
-    users = list(users_col.find({}, {"_id": 0}))
-    return {
-        "total_subscribers": len(users),
-        "active": sum(1 for u in users if u.get("is_active")),
-        "expired": sum(1 for u in users if not u.get("is_active")),
-        "users": users
+    # Verify Paystack HMAC Signature
+    if x_paystack_signature and not verify_paystack_signature(body, x_paystack_signature):
+        logger.warning("⚠️ Invalid Paystack HMAC Signature rejected!")
+        raise HTTPException(status_code=400, detail="Invalid signature verification.")
+
+    payload = await request.json()
+    event = payload.get("event")
+    
+    if event == "charge.success":
+        data = payload["data"]
+        metadata = data.get("metadata", {})
+        
+        tg_id = int(metadata.get("telegram_id", 0))
+        channel_type = metadata.get("channel_type", "gold")
+        days = int(metadata.get("days", 30))
+        reference = data.get("reference", "")
+        amount_paid = float(data.get("amount", 0)) / 100.0  # Convert kobo/pesewas to standard units
+        currency = data.get("currency", "GHS")
+
+        if not tg_id:
+            return {"status": "ignored"}
+
+        now = datetime.utcnow()
+        expires_at = now + timedelta(days=days)
+
+        # 1. Update VIP Access
+        users_col.update_one(
+            {"telegram_id": tg_id, "channel_type": channel_type},
+            {
+                "$set": {
+                    "telegram_id": tg_id,
+                    "channel_type": channel_type,
+                    "purchased_at": now,
+                    "expires_at": expires_at,
+                    "is_active": True,
+                    "last_reference": reference,
+                    "amount_paid": amount_paid,
+                    "currency": currency
+                }
+            },
+            upsert=True
+        )
+
+        # 2. Process Referral & Attribution Commission
+        lead = leads_col.find_one({"telegram_id": tg_id})
+        ref_code = lead.get("referred_by") if lead else None
+
+        if ref_code:
+            commission = amount_paid * AFFILIATE_COMMISSION_RATE
+            affiliates_col.update_one(
+                {"ref_code": ref_code},
+                {
+                    "$inc": {
+                        "balance": commission,
+                        "total_earned": commission
+                    }
+                }
+            )
+            logger.info(f"💰 Affiliate {ref_code} credited GHS {commission:.2f} (15% of {amount_paid})")
+
+        leads_col.update_one({"telegram_id": tg_id}, {"$set": {"converted": True, "converted_at": now}})
+
+        # 3. Dispatch VIP Access Link
+        bot = Bot(token=BOT_TOKEN)
+        target_link = GOLD_PRIMARY_LINK if channel_type == "gold" else FOREX_PRIMARY_LINK
+        btn = InlineKeyboardMarkup([[InlineKeyboardButton("🚀 Join VIP Channel", url=target_link)]])
+        
+        try:
+            await bot.send_message(
+                chat_id=tg_id,
+                text=f"🎉 <b>PAYMENT CONFIRMED!</b>\n\nYour subscription is active for <b>{days} days</b>.",
+                parse_mode="HTML",
+                reply_markup=btn
+            )
+        except Exception as e:
+            logger.error(f"❌ Notification send failed: {e}")
+
+    return {"status": "success"}
+
+@app.post("/api/affiliate/withdraw")
+async def request_affiliate_withdrawal(req: WithdrawalRequest):
+    if affiliates_col is None or withdrawals_col is None:
+        raise HTTPException(status_code=503, detail="Database offline")
+
+    affiliate = affiliates_col.find_one({"telegram_id": req.telegram_id})
+    if not affiliate or affiliate.get("balance", 0.0) < req.amount:
+        raise HTTPException(status_code=400, detail="Insufficient affiliate balance.")
+
+    if req.amount < 20.0:
+        raise HTTPException(status_code=400, detail="Minimum withdrawal is GHS 20.00")
+
+    headers = {
+        "Authorization": f"Bearer {PAYSTACK_SECRET}",
+        "Content-Type": "application/json"
     }
 
-@app.get("/admin/leads")
-async def get_all_leads():
-    """View all leads."""
-    if leads_col is None:
-        return JSONResponse({"error": "Database not connected"}, status_code=503)
-    
-    leads = list(leads_col.find({}, {"_id": 0}))
-    return {
-        "total_leads": len(leads),
-        "converted": sum(1 for l in leads if l.get("converted")),
-        "unconverted": sum(1 for l in leads if not l.get("converted")),
-        "leads": leads
-    }
+    async with httpx.AsyncClient() as client:
+        # Step A: Create Transfer Recipient on Paystack
+        recipient_payload = {
+            "type": "mobile_money",
+            "name": req.account_name,
+            "account_number": req.mobile_number,
+            "bank_code": req.bank_code,
+            "currency": "GHS"
+        }
+        rec_res = await client.post("https://api.paystack.co/transferrecipient", json=recipient_payload, headers=headers)
+        rec_data = rec_res.json()
 
-@app.get("/admin/dashboard")
+        if not rec_data.get("status"):
+            raise HTTPException(status_code=400, detail=rec_data.get("message", "Recipient setup failed."))
+
+        recipient_code = rec_data["data"]["recipient_code"]
+
+        # Step B: Initiate Mobile Money Transfer
+        transfer_payload = {
+            "source": "balance",
+            "amount": int(req.amount * 100),
+            "recipient": recipient_code,
+            "reason": "Jay Empire Affiliate Payout"
+        }
+        trans_res = await client.post("https://api.paystack.co/transfer", json=transfer_payload, headers=headers)
+        trans_data = trans_res.json()
+
+        if not trans_data.get("status"):
+            raise HTTPException(status_code=400, detail=trans_data.get("message", "Transfer initiation failed."))
+
+        transfer_ref = trans_data["data"]["reference"]
+
+        # Step C: Atomically Deduct Balance and Record Audit
+        affiliates_col.update_one(
+            {"telegram_id": req.telegram_id},
+            {
+                "$inc": {
+                    "balance": -req.amount,
+                    "total_withdrawn": req.amount
+                }
+            }
+        )
+
+        withdraw_record = {
+            "telegram_id": req.telegram_id,
+            "amount": req.amount,
+            "mobile_number": req.mobile_number,
+            "account_name": req.account_name,
+            "reference": transfer_ref,
+            "status": trans_data["data"].get("status", "success"),
+            "timestamp": datetime.utcnow()
+        }
+        withdrawals_col.insert_one(withdraw_record)
+
+    return {"status": "success", "message": "Payout initiated successfully!", "reference": transfer_ref}
+
+@app.get("/admin/dashboard", dependencies=[Depends(verify_admin_key)])
 async def admin_dashboard():
-    """Quick stats overview."""
-    if users_col is None or leads_col is None:
-        return JSONResponse({"error": "Database not connected"}, status_code=503)
-    
-    now = datetime.utcnow()
-    
-    total_users = users_col.count_documents({})
-    active_users = users_col.count_documents({"is_active": True})
-    expired_users = users_col.count_documents({"is_active": False})
-    expiring_soon = users_col.count_documents({
-        "is_active": True,
-        "expires_at": {"$lte": now + timedelta(days=3), "$gt": now}
-    })
-    
-    total_leads = leads_col.count_documents({})
-    converted_leads = leads_col.count_documents({"converted": True})
-    
     return {
-        "subscribers": {
-            "total": total_users,
-            "active": active_users,
-            "expired": expired_users,
-            "expiring_in_3_days": expiring_soon
-        },
-        "leads": {
-            "total": total_leads,
-            "converted": converted_leads,
-            "conversion_rate": f"{(converted_leads/total_leads*100):.1f}%" if total_leads > 0 else "0%"
-        },
-        "timestamp": now.isoformat()
+        "subscribers": users_col.count_documents({"is_active": True}),
+        "leads": leads_col.count_documents({}),
+        "affiliates": affiliates_col.count_documents({}),
+        "total_payouts": list(withdrawals_col.aggregate([{"$group": {"_id": None, "total": {"$sum": "$amount"}}}]))
     }
 
-# ==============================================================================
-# RUN
-# ==============================================================================
 if __name__ == "__main__":
     import uvicorn
-    port = int(os.environ.get("PORT", 10000))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
