@@ -22,5 +22,5 @@ services:
         sync: false
       - key: FOREX_CHANNEL_ID
         sync: false
-      - key: ADMIN_TELEGRAM_ID        # ← NEW
+      - key: ADMIN_TELEGRAM_ID
         sync: false
