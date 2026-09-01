@@ -1,6 +1,6 @@
 """
-server.py — Jay Empire VIP Backend
-With FULL Affiliate System + Paystack Split Payments
+server.py — Jay Empire VIP Backend + Affiliate System
+With Paystack Split Payments, Auto-Payouts, and Milestone Rewards
 """
 
 import os
@@ -50,11 +50,11 @@ GOLD_PRIMARY_LINK = "https://t.me/+env-Zrui2ykwYjg8"
 FOREX_PRIMARY_LINK = "https://t.me/+njii3OAHlqI3MjQ8"
 
 # ==============================================================================
-# COMMISSION RATES
+# COMMISSION CONFIG
 # ==============================================================================
 COMMISSION_FIRST_SALE = 50   # 50% on first payment
 COMMISSION_RENEWAL = 35      # 35% on renewals
-REFERRAL_MILESTONE = 10      # 10 referrals = lifetime VIP notification
+REFERRAL_MILESTONE = 10      # 10 active referrals = lifetime VIP notification
 
 # ==============================================================================
 # MONGODB
@@ -87,7 +87,6 @@ def init_mongodb():
 
         db = client.get_default_database()
         
-        # Collections
         users_col = db["vip_users"]
         leads_col = db["leads"]
         affiliates_col = db["affiliates"]
@@ -120,7 +119,6 @@ def get_paystack_headers():
     return {"Authorization": f"Bearer {PAYSTACK_SECRET}", "Content-Type": "application/json"}
 
 async def create_paystack_subaccount(business_name, bank_code, account_number, percentage):
-    """Create Paystack subaccount for affiliate auto-payouts"""
     payload = {
         "business_name": business_name,
         "settlement_bank": bank_code,
@@ -169,12 +167,9 @@ def generate_ref_code():
 # TELEGRAM BOT
 # ==============================================================================
 telegram_app = Application.builder().token(BOT_TOKEN).build()
-
-# In-memory state for multi-step flows
-user_states = {}
+user_states = {}  # {telegram_id: {"step": "...", "data": {...}}}
 
 async def start_cmd(update: Update, context):
-    """Handle /start with referral detection"""
     user = update.effective_user
     if not user:
         return
@@ -183,16 +178,16 @@ async def start_cmd(update: Update, context):
     username = user.username or ""
     text = update.message.text or ""
     
-    logger.info(f"🤖 /start from {chat_id} (@{username}) — text: {text}")
+    logger.info(f"🤖 /start from {chat_id} (@{username})")
 
-    # Extract ref code from deep link: /start ref_XXXXX
+    # Extract ref code from deep link
     ref_code = None
     if " " in text:
         payload = text.split(" ", 1)[1].strip()
         if payload.startswith("ref_"):
             ref_code = payload.replace("ref_", "")
             user_states[chat_id] = {"referred_by": ref_code}
-            logger.info(f"🔗 Referral detected: {ref_code} for user {chat_id}")
+            logger.info(f"🔗 Referral: {ref_code} for user {chat_id}")
 
     # Log lead
     if leads_col is not None:
@@ -213,15 +208,12 @@ async def start_cmd(update: Update, context):
                 upsert=True
             )
         except Exception as e:
-            logger.error(f"Lead logging error: {e}")
+            logger.error(f"Lead error: {e}")
 
-    # Check if user is already an affiliate
+    # Check if already affiliate
     is_affiliate = affiliates_col.find_one({"telegram_id": chat_id, "is_active": True}) if affiliates_col else None
 
-    # Build keyboard
-    kb = [
-        [InlineKeyboardButton("👑 Launch VIP Terminal App", web_app=WebAppInfo(url=MINI_APP_URL))]
-    ]
+    kb = [[InlineKeyboardButton("👑 Launch VIP Terminal App", web_app=WebAppInfo(url=MINI_APP_URL))]]
     
     if not is_affiliate:
         kb.append([InlineKeyboardButton("💰 Become an Affiliate", callback_data="affiliate_start")])
@@ -235,42 +227,37 @@ async def start_cmd(update: Update, context):
         if active_refs >= REFERRAL_MILESTONE and not is_affiliate.get("milestone_notified"):
             await notify_milestone(update, is_affiliate, active_refs)
 
-    welcome_text = (
-        "<b>Welcome to Jay Empire VIP Terminal 👑</b>\n\n"
-        "Tap below to launch the VIP Mini App and subscribe."
-    )
+    welcome = "<b>Welcome to Jay Empire VIP Terminal 👑</b>\n\nTap below to launch the VIP Mini App:"
     if ref_code:
-        welcome_text += f"\n\n<i>👥 You were referred by affiliate: <code>{ref_code}</code></i>"
+        welcome += f"\n\n<i>👥 Referred by: <code>{ref_code}</code></i>"
 
-    await update.message.reply_text(welcome_text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(kb))
+    await update.message.reply_text(welcome, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(kb))
 
 async def notify_milestone(update, affiliate, count):
-    """Notify affiliate they hit 10+ referrals"""
     try:
         await update.message.reply_text(
             f"🎉 <b>CONGRATULATIONS!</b> 🎉\n\n"
-            f"You've successfully referred <b>{count}</b> active members to Jay Empire!\n\n"
+            f"You've referred <b>{count}</b> active members!\n\n"
             f"🏆 <b>You've unlocked Lifetime VIP Access!</b>\n\n"
-            f"Please contact <b>@{ADMIN_USERNAME}</b> directly to claim your reward. "
+            f"Contact <b>@{ADMIN_USERNAME}</b> to claim your reward. "
             f"Show this message as proof.\n\n"
-            f"<i>Your referral code: <code>{affiliate['ref_code']}</code></i>",
+            f"<i>Your code: <code>{affiliate['ref_code']}</code></i>",
             parse_mode="HTML"
         )
         affiliates_col.update_one(
             {"_id": affiliate["_id"]},
             {"$set": {"milestone_notified": True, "milestone_reached_at": datetime.utcnow()}}
         )
-        logger.info(f"🏆 Milestone notified for affiliate {affiliate['ref_code']}")
+        logger.info(f"🏆 Milestone: {affiliate['ref_code']}")
     except Exception as e:
-        logger.error(f"Milestone notify error: {e}")
+        logger.error(f"Milestone error: {e}")
 
 telegram_app.add_handler(CommandHandler("start", start_cmd))
 
 # ==============================================================================
-# AFFILIATE CALLBACK HANDLERS (via webhook)
+# AFFILIATE CALLBACKS
 # ==============================================================================
 async def handle_affiliate_callback(chat_id, action, username=""):
-    """Process affiliate-related callback queries"""
     bot = Bot(token=BOT_TOKEN)
     
     if action == "affiliate_start":
@@ -279,15 +266,15 @@ async def handle_affiliate_callback(chat_id, action, username=""):
             [InlineKeyboardButton("⬅️ Back", callback_data="back_main")]
         ]
         terms = (
-            "<b>🤝 JAY EMPIRE AFFILIATE PROGRAM</b>\n\n"
-            f"<b>Commission Structure:</b>\n"
-            f"• <b>First Sale:</b> {COMMISSION_FIRST_SALE}% of every new subscriber\n"
-            f"• <b>Renewals:</b> {COMMISSION_RENEWAL}% of every renewal payment\n"
-            f"• <b>Lifetime tracking:</b> Earn as long as referrals stay subscribed\n\n"
-            f"<b>Payout:</b> Automatic via Paystack Split. Money lands in your bank account in 1-2 days.\n\n"
-            f"<b>🏆 Bonus:</b> Refer {REFERRAL_MILESTONE}+ active members and get <b>Lifetime VIP Access</b>!\n\n"
-            f"<b>Rules:</b> No fake signups, no self-referrals, no spam. Violation = permanent ban.\n\n"
-            f"<i>By clicking 'I Agree & Join', you accept these terms and authorize Paystack subaccount creation.</i>"
+            f"<b>🤝 JAY EMPIRE AFFILIATE PROGRAM</b>\n\n"
+            f"<b>Commissions:</b>\n"
+            f"• First Sale: <b>{COMMISSION_FIRST_SALE}%</b>\n"
+            f"• Renewals: <b>{COMMISSION_RENEWAL}%</b>\n"
+            f"• Lifetime tracking\n\n"
+            f"<b>Payout:</b> Automatic via Paystack Split. 1-2 days to bank.\n\n"
+            f"<b>🏆 Bonus:</b> {REFERRAL_MILESTONE}+ active referrals = <b>Lifetime VIP</b>!\n\n"
+            f"<b>Rules:</b> No fake signups, no self-referrals, no spam.\n\n"
+            f"<i>Click 'I Agree & Join' to accept terms and create your Paystack subaccount.</i>"
         )
         await bot.send_message(chat_id=chat_id, text=terms, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(kb))
     
@@ -295,7 +282,7 @@ async def handle_affiliate_callback(chat_id, action, username=""):
         user_states[chat_id] = {"step": "awaiting_full_name", "data": {}}
         await bot.send_message(
             chat_id=chat_id,
-            text="📝 <b>Step 1/4:</b> Enter your <b>Full Name</b> (as it appears on your bank account):",
+            text="📝 <b>Step 1/4:</b> Enter your <b>Full Name</b> (as on bank account):",
             parse_mode="HTML"
         )
     
@@ -306,20 +293,19 @@ async def handle_affiliate_callback(chat_id, action, username=""):
             total_refs = referrals_col.count_documents({"affiliate_id": aff["_id"]}) if referrals_col else 0
             active_refs = referrals_col.count_documents({"affiliate_id": aff["_id"], "is_active": True}) if referrals_col else 0
             
-            milestone_status = "🏆 UNLOCKED!" if active_refs >= REFERRAL_MILESTONE else f"({active_refs}/{REFERRAL_MILESTONE} to unlock)"
+            milestone = "🏆 UNLOCKED!" if active_refs >= REFERRAL_MILESTONE else f"({active_refs}/{REFERRAL_MILESTONE})"
             
             dashboard = (
                 f"<b>📊 Your Affiliate Dashboard</b>\n\n"
                 f"🔗 <code>{ref_link}</code>\n\n"
-                f"💰 Total Earnings: <b>${aff.get('total_earnings', 0):,.2f}</b>\n"
-                f"👥 Total Referrals: <b>{total_refs}</b>\n"
-                f"✅ Active Subscribers: <b>{active_refs}</b>\n"
-                f"📈 First Sale: <b>{COMMISSION_FIRST_SALE}%</b> | 🔄 Renewal: <b>{COMMISSION_RENEWAL}%</b>\n"
-                f"🏆 Lifetime VIP Bonus: <b>{milestone_status}</b>\n\n"
-                f"<i>Share your link anywhere! Commissions are automatic.</i>"
+                f"💰 Earnings: <b>${aff.get('total_earnings', 0):,.2f}</b>\n"
+                f"👥 Total: <b>{total_refs}</b> | Active: <b>{active_refs}</b>\n"
+                f"📈 First: <b>{COMMISSION_FIRST_SALE}%</b> | 🔄 Renewal: <b>{COMMISSION_RENEWAL}%</b>\n"
+                f"🏆 Milestone: <b>{milestone}</b>\n\n"
+                f"<i>Share your link! Commissions are automatic.</i>"
             )
             kb = [
-                [InlineKeyboardButton("📋 Copy My Link", callback_data=f"aff_copy:{aff['ref_code']}")],
+                [InlineKeyboardButton("📋 Copy Link", callback_data=f"aff_copy:{aff['ref_code']}")],
                 [InlineKeyboardButton("🏦 Bank Info", callback_data="affiliate_bank_info")],
                 [InlineKeyboardButton("⬅️ Back", callback_data="back_main")]
             ]
@@ -330,7 +316,7 @@ async def handle_affiliate_callback(chat_id, action, username=""):
         link = f"https://t.me/JayEmpire_bot?start=ref_{ref_code}"
         await bot.send_message(
             chat_id=chat_id,
-            text=f"<b>🔗 Your Referral Link:</b>\n\n<code>{link}</code>\n\n<i>Tap and hold to copy, then share!</i>",
+            text=f"<b>🔗 Your Link:</b>\n\n<code>{link}</code>\n\n<i>Tap and hold to copy!</i>",
             parse_mode="HTML"
         )
     
@@ -340,13 +326,13 @@ async def handle_affiliate_callback(chat_id, action, username=""):
             b = aff.get("bank_details", {})
             await bot.send_message(
                 chat_id=chat_id,
-                text=f"<b>🏦 Payout Details</b>\n\nBank: <b>{b.get('bank_name','N/A')}</b>\nAccount: <b>****{b.get('account_number','0000')[-4:]}</b>\nName: <b>{b.get('account_name','N/A')}</b>\n\n<i>Automatic payouts via Paystack. No action needed.</i>",
+                text=f"<b>🏦 Payout Details</b>\n\nBank: <b>{b.get('bank_name','N/A')}</b>\nAccount: <b>****{b.get('account_number','0000')[-4:]}</b>\nName: <b>{b.get('account_name','N/A')}</b>\n\n<i>Automatic via Paystack.</i>",
                 parse_mode="HTML"
             )
     
     elif action == "back_main":
         is_aff = affiliates_col.find_one({"telegram_id": chat_id, "is_active": True}) if affiliates_col else None
-        kb = [[InlineKeyboardButton("👑 Launch VIP Terminal App", web_app=WebAppInfo(url=MINI_APP_URL))]]
+        kb = [[InlineKeyboardButton("👑 Launch VIP Terminal", web_app=WebAppInfo(url=MINI_APP_URL))]]
         if not is_aff:
             kb.append([InlineKeyboardButton("💰 Become an Affiliate", callback_data="affiliate_start")])
         else:
@@ -358,38 +344,36 @@ async def handle_affiliate_callback(chat_id, action, username=""):
 # ==============================================================================
 async def kick_from_channel(user_id: int, channel_id: str, channel_type: str):
     bot = Bot(token=BOT_TOKEN)
-    channel_name = "JAY GOLD MASTER VIP" if channel_type == "gold" else "JAY FX PREMIUM SIGNALS"
-    
+    name = "JAY GOLD MASTER VIP" if channel_type == "gold" else "JAY FX PREMIUM SIGNALS"
     try:
         await bot.ban_chat_member(chat_id=channel_id, user_id=user_id)
         await bot.unban_chat_member(chat_id=channel_id, user_id=user_id)
         await bot.send_message(
             chat_id=user_id,
-            text=f"⚠️ <b>Your {channel_name} access has expired.</b>\n\nRenew via the VIP Terminal to regain access.",
+            text=f"⚠️ <b>Your {name} access has expired.</b>\n\nRenew via the VIP Terminal.",
             parse_mode="HTML"
         )
-        logger.info(f"✅ Kicked user {user_id} from {channel_type}")
+        logger.info(f"✅ Kicked {user_id} from {channel_type}")
         return True
     except Exception as e:
-        logger.error(f"❌ Failed to kick {user_id}: {e}")
+        logger.error(f"❌ Kick failed {user_id}: {e}")
         return False
 
 async def send_reminder(user_id: int, channel_type: str, days_left: int):
     bot = Bot(token=BOT_TOKEN)
-    channel_name = "JAY GOLD MASTER VIP" if channel_type == "gold" else "JAY FX PREMIUM SIGNALS"
-    
+    name = "JAY GOLD MASTER VIP" if channel_type == "gold" else "JAY FX PREMIUM SIGNALS"
     try:
         kb = InlineKeyboardMarkup([[InlineKeyboardButton("👑 Renew Now", web_app=WebAppInfo(url=MINI_APP_URL))]])
         await bot.send_message(
             chat_id=user_id,
-            text=f"⏰ <b>{channel_name} Renewal Reminder</b>\n\nYour access expires in <b>{days_left} day(s)</b>.\nRenew now to avoid automatic removal.",
+            text=f"⏰ <b>{name} expires in {days_left} day(s)</b>.\nRenew now to avoid removal.",
             parse_mode="HTML",
             reply_markup=kb
         )
-        logger.info(f"✅ Reminder sent to {user_id}")
+        logger.info(f"✅ Reminder to {user_id}")
         return True
     except Exception as e:
-        logger.error(f"❌ Reminder failed for {user_id}: {e}")
+        logger.error(f"❌ Reminder failed {user_id}: {e}")
         return False
 
 # ==============================================================================
@@ -397,71 +381,67 @@ async def send_reminder(user_id: int, channel_type: str, days_left: int):
 # ==============================================================================
 async def run_daily_checks():
     if users_col is None or leads_col is None:
-        logger.error("Database not available")
-        return {"error": "Database not connected"}
+        logger.error("DB not available")
+        return {"error": "DB not connected"}
 
     now = datetime.utcnow()
     results = {"reminders_sent": 0, "users_kicked": 0, "leads_followed": 0, "errors": []}
 
     # 1. Follow up unconverted leads (48h+)
     try:
-        lead_cutoff = now - timedelta(hours=48)
+        cutoff = now - timedelta(hours=48)
         unconverted = leads_col.find({
             "converted": False,
             "followup_sent": False,
-            "started_at": {"$lte": lead_cutoff}
+            "started_at": {"$lte": cutoff}
         })
-        
         for lead in unconverted:
             try:
                 kb = InlineKeyboardMarkup([[InlineKeyboardButton("👑 Enter VIP Terminal", web_app=WebAppInfo(url=MINI_APP_URL))]])
                 await Bot(token=BOT_TOKEN).send_message(
                     chat_id=lead["telegram_id"],
-                    text="👑 <b>Jay Empire VIP Market Alert</b>\n\nHigh-precision trade setups are active now. Don't miss the next wave.\n\nTap below to lock in your membership:",
+                    text="👑 <b>Jay Empire VIP Market Alert</b>\n\nHigh-precision trade setups are active now. Tap below:",
                     parse_mode="HTML",
                     reply_markup=kb
                 )
                 leads_col.update_one({"_id": lead["_id"]}, {"$set": {"followup_sent": True}})
                 results["leads_followed"] += 1
             except Exception as e:
-                logger.error(f"Lead follow-up error: {e}")
                 results["errors"].append(f"lead_{lead['telegram_id']}: {str(e)}")
     except Exception as e:
-        logger.error(f"DB error (leads): {e}")
+        results["errors"].append(f"leads: {str(e)}")
 
-    # 2. Send 3-day expiry reminders
+    # 2. Reminders
     try:
-        reminder_target = now + timedelta(days=3)
+        target = now + timedelta(days=3)
         expiring = users_col.find({
             "is_active": True,
             "reminder_sent": False,
-            "expires_at": {"$lte": reminder_target, "$gt": now}
+            "expires_at": {"$lte": target, "$gt": now}
         })
-        
         for user in expiring:
             days_left = max((user["expires_at"] - now).days, 1)
             if await send_reminder(user["telegram_id"], user["channel_type"], days_left):
                 users_col.update_one({"_id": user["_id"]}, {"$set": {"reminder_sent": True}})
                 results["reminders_sent"] += 1
     except Exception as e:
-        logger.error(f"DB error (reminders): {e}")
+        results["errors"].append(f"reminders: {str(e)}")
 
-    # 3. Kick expired users
+    # 3. Kick expired
     try:
         expired = users_col.find({"is_active": True, "expires_at": {"$lte": now}})
-        
         for user in expired:
-            channel_id = GOLD_CHANNEL_ID if user["channel_type"] == "gold" else FOREX_CHANNEL_ID
-            if await kick_from_channel(user["telegram_id"], channel_id, user["channel_type"]):
+            cid = GOLD_CHANNEL_ID if user["channel_type"] == "gold" else FOREX_CHANNEL_ID
+            if await kick_from_channel(user["telegram_id"], cid, user["channel_type"]):
                 users_col.update_one(
                     {"_id": user["_id"]},
                     {"$set": {"is_active": False, "kicked_at": now}}
                 )
                 results["users_kicked"] += 1
     except Exception as e:
-        logger.error(f"DB error (expired): {e}")
+        results["errors"].append(f"expired: {str(e)}")
 
-    logger.info(f"📊 Daily check: {results}")
+    logger.info(f"📊 Daily: {results}")
     return results
 
 async def scheduler_loop():
@@ -470,7 +450,7 @@ async def scheduler_loop():
         await run_daily_checks()
 
 # ==============================================================================
-# FASTAPI LIFESPAN
+# LIFESPAN
 # ==============================================================================
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -480,43 +460,44 @@ async def lifespan(app: FastAPI):
     webhook_target = f"{RENDER_URL.rstrip('/')}/telegram-webhook"
     bot = Bot(token=BOT_TOKEN)
     await bot.set_webhook(url=webhook_target)
-    logger.info(f"✅ Webhook set: {webhook_target}")
+    logger.info(f"✅ Webhook: {webhook_target}")
     
     asyncio.create_task(scheduler_loop())
     yield
-    
     await telegram_app.stop()
 
 app = FastAPI(lifespan=lifespan)
 
 # ==============================================================================
-# API ENDPOINTS
+# ENDPOINTS
 # ==============================================================================
 
 @app.get("/")
-async def health_check():
-    db_status = "connected" if db is not None else "disconnected"
+async def health():
     return {
         "status": "active",
-        "mongodb": db_status,
-        "service": "Jay Empire VIP + Affiliate System",
+        "mongodb": "connected" if db else "disconnected",
+        "service": "Jay Empire VIP + Affiliate",
         "timestamp": datetime.utcnow().isoformat()
     }
 
 @app.get("/health/db")
 async def health_db():
     if db is None:
-        return JSONResponse({"status": "unhealthy", "mongodb": "not_initialized"}, status_code=503)
+        return JSONResponse({"status": "unhealthy"}, status_code=503)
     try:
         db.command("ping")
-        return {"status": "healthy", "mongodb": "connected", "timestamp": datetime.utcnow().isoformat()}
+        return {"status": "healthy", "timestamp": datetime.utcnow().isoformat()}
     except Exception as e:
-        return JSONResponse({"status": "unhealthy", "mongodb": str(e)}, status_code=503)
+        return JSONResponse({"status": "unhealthy", "error": str(e)}, status_code=503)
 
 @app.post("/cron/daily-check")
-async def cron_daily_check():
-    results = await run_daily_checks()
-    return JSONResponse({"status": "completed", "results": results, "timestamp": datetime.utcnow().isoformat()})
+async def cron_daily():
+    return JSONResponse({
+        "status": "completed",
+        "results": await run_daily_checks(),
+        "timestamp": datetime.utcnow().isoformat()
+    })
 
 # ==============================================================================
 # TELEGRAM WEBHOOK
@@ -525,7 +506,7 @@ async def cron_daily_check():
 async def telegram_webhook(request: Request):
     data = await request.json()
     
-    # Handle callback queries (affiliate buttons, etc.)
+    # Callback queries (affiliate buttons)
     if "callback_query" in data:
         query = data["callback_query"]
         chat_id = query["message"]["chat"]["id"]
@@ -537,22 +518,90 @@ async def telegram_webhook(request: Request):
         except:
             pass
         
+        # Handle bank selection during registration
+        if action.startswith("aff_bank:"):
+            _, bank_code, bank_name = action.split(":", 2)
+            if chat_id in user_states:
+                user_states[chat_id]["data"]["bank_code"] = bank_code
+                user_states[chat_id]["data"]["bank_name"] = bank_name
+                user_states[chat_id]["step"] = "awaiting_account_number"
+            await Bot(token=BOT_TOKEN).send_message(
+                chat_id=chat_id,
+                text=f"🏦 <b>Step 3/4:</b> Enter your <b>Account Number</b> for {bank_name}:",
+                parse_mode="HTML"
+            )
+            return {"status": "ok"}
+        
+        # Handle confirmation
+        if action == "affiliate_confirm":
+            if chat_id not in user_states:
+                return {"status": "ok"}
+            state = user_states[chat_id]
+            d = state["data"]
+            
+            subaccount = await create_paystack_subaccount(
+                d["full_name"], d["bank_code"], d["account_number"], COMMISSION_FIRST_SALE
+            )
+            if not subaccount:
+                await Bot(token=BOT_TOKEN).send_message(
+                    chat_id=chat_id,
+                    text="❌ Failed to create payout account. Contact @jay_empire247."
+                )
+                return {"status": "ok"}
+            
+            ref_code = generate_ref_code()
+            aff_doc = {
+                "telegram_id": chat_id,
+                "username": username,
+                "full_name": d["full_name"],
+                "ref_code": ref_code,
+                "paystack_subaccount": subaccount,
+                "bank_details": {
+                    "bank_code": d["bank_code"],
+                    "bank_name": d["bank_name"],
+                    "account_number": d["account_number"],
+                    "account_name": d.get("account_name", d["full_name"])
+                },
+                "commission_rates": {"first_sale": COMMISSION_FIRST_SALE, "renewal": COMMISSION_RENEWAL},
+                "total_earnings": 0,
+                "total_referrals": 0,
+                "is_active": True,
+                "milestone_notified": False,
+                "created_at": datetime.utcnow()
+            }
+            
+            if affiliates_col:
+                affiliates_col.insert_one(aff_doc)
+            
+            ref_link = f"https://t.me/JayEmpire_bot?start=ref_{ref_code}"
+            await Bot(token=BOT_TOKEN).send_message(
+                chat_id=chat_id,
+                text=(
+                    f"🎉 <b>Welcome to the Affiliate Program!</b>\n\n"
+                    f"🔗 <b>Your Link:</b>\n<code>{ref_link}</code>\n\n"
+                    f"💰 <b>Commissions:</b> {COMMISSION_FIRST_SALE}% first | {COMMISSION_RENEWAL}% renewal\n"
+                    f"🏆 <b>Bonus:</b> {REFERRAL_MILESTONE}+ refs = Lifetime VIP\n"
+                    f"🏦 <b>Payouts:</b> Auto to {d['bank_name']}\n\n"
+                    f"<i>Start sharing now!</i>"
+                ),
+                parse_mode="HTML"
+            )
+            del user_states[chat_id]
+            return {"status": "ok"}
+        
         await handle_affiliate_callback(chat_id, action, username)
         return {"status": "ok"}
     
-    # Handle text messages (affiliate registration flow)
+    # Text messages (affiliate registration flow)
     if "message" in data and "text" in data["message"]:
         chat_id = data["message"]["chat"]["id"]
         text = data["message"]["text"]
-        username = data["message"]["from"].get("username", "")
         
-        # Skip commands
         if text.startswith("/"):
             update = Update.de_json(data, telegram_app.bot)
             await telegram_app.process_update(update)
             return {"status": "ok"}
         
-        # Handle affiliate registration steps
         if chat_id in user_states:
             state = user_states[chat_id]
             step = state.get("step")
@@ -564,7 +613,12 @@ async def telegram_webhook(request: Request):
                 banks = await get_paystack_bank_list()
                 kb = [[InlineKeyboardButton(b["name"], callback_data=f"aff_bank:{b['code']}:{b['name']}")] for b in banks[:20]]
                 kb.append([InlineKeyboardButton("⬅️ Cancel", callback_data="back_main")])
-                await bot.send_message(chat_id=chat_id, text="🏦 <b>Step 2/4: Select Your Bank</b>", parse_mode="HTML", reply_markup=InlineKeyboardMarkup(kb))
+                await bot.send_message(
+                    chat_id=chat_id,
+                    text="🏦 <b>Step 2/4: Select Your Bank</b>",
+                    parse_mode="HTML",
+                    reply_markup=InlineKeyboardMarkup(kb)
+                )
                 return {"status": "ok"}
             
             elif step == "awaiting_account_number":
@@ -574,21 +628,21 @@ async def telegram_webhook(request: Request):
                 if acc_name:
                     state["data"]["account_name"] = acc_name
                     kb = [
-                        [InlineKeyboardButton("✅ Confirm & Create Account", callback_data="affiliate_confirm")],
+                        [InlineKeyboardButton("✅ Confirm & Create", callback_data="affiliate_confirm")],
                         [InlineKeyboardButton("❌ Start Over", callback_data="affiliate_agree")]
                     ]
                     await bot.send_message(
                         chat_id=chat_id,
-                        text=f"<b>Confirm Details:</b>\n\nName: {state['data']['full_name']}\nBank: {state['data']['bank_name']}\nAccount: {text}\nVerified: {acc_name}\n\nClick confirm to start earning!",
+                        text=f"<b>Confirm:</b>\n\nName: {state['data']['full_name']}\nBank: {state['data']['bank_name']}\nAccount: {text}\nVerified: {acc_name}\n\nClick confirm to start earning!",
                         parse_mode="HTML",
                         reply_markup=InlineKeyboardMarkup(kb)
                     )
                 else:
-                    await bot.send_message(chat_id=chat_id, text="❌ Could not verify account. Please check and try again.")
+                    await bot.send_message(chat_id=chat_id, text="❌ Could not verify. Check and try again.")
                     state["step"] = "awaiting_account_number"
                 return {"status": "ok"}
     
-    # Process via python-telegram-bot for commands
+    # Commands via python-telegram-bot
     update = Update.de_json(data, telegram_app.bot)
     await telegram_app.process_update(update)
     return {"status": "ok"}
@@ -598,145 +652,130 @@ async def telegram_webhook(request: Request):
 # ==============================================================================
 @app.post("/paystack-webhook")
 async def paystack_webhook(request: Request, x_paystack_signature: str = Header(None)):
-    # Verify signature
     if not PAYSTACK_SECRET:
-        raise HTTPException(status_code=500, detail="Paystack secret not configured")
+        raise HTTPException(status_code=500, detail="Paystack secret not set")
     
     body = await request.body()
-    expected_sig = hmac.new(PAYSTACK_SECRET.encode('utf-8'), body, hashlib.sha512).hexdigest()
+    expected = hmac.new(PAYSTACK_SECRET.encode(), body, hashlib.sha512).hexdigest()
     
-    if not x_paystack_signature or not hmac.compare_digest(expected_sig, x_paystack_signature):
+    if not x_paystack_signature or not hmac.compare_digest(expected, x_paystack_signature):
         raise HTTPException(status_code=401, detail="Invalid signature")
     
     try:
         payload = await request.json()
-        logger.info(f"💰 Paystack webhook: {payload.get('event')}")
+        logger.info(f"💰 Webhook: {payload.get('event')}")
         
         if payload.get("event") == "charge.success":
             data = payload["data"]
-            metadata = data.get("metadata", {})
+            meta = data.get("metadata", {})
             
-            tg_id = metadata.get("telegram_id")
-            channel_type = metadata.get("channel_type", "gold")
-            days = int(metadata.get("days", 30))
+            tg_id = meta.get("telegram_id")
+            channel_type = meta.get("channel_type", "gold")
+            days = int(meta.get("days", 30))
             reference = data.get("reference", "unknown")
-            ref_code = metadata.get("ref_code")
-            is_renewal = metadata.get("is_renewal", False)
-            
-            logger.info(f"💳 Payment: ref={reference}, user={tg_id}, channel={channel_type}, days={days}, ref={ref_code}")
+            ref_code = meta.get("ref_code")
+            is_renewal = meta.get("is_renewal", False)
             
             if not tg_id or tg_id == 0:
-                logger.warning("⚠️ Missing telegram_id")
                 return {"status": "ignored"}
             
             now = datetime.utcnow()
-            expires_at = now + timedelta(days=days)
+            expires = now + timedelta(days=days)
             
-            if users_col is not None:
-                try:
-                    # Upsert VIP user
-                    users_col.update_one(
-                        {"telegram_id": tg_id, "channel_type": channel_type},
-                        {
-                            "$set": {
-                                "telegram_id": tg_id,
-                                "channel_type": channel_type,
-                                "purchased_at": now,
-                                "expires_at": expires_at,
-                                "is_active": True,
-                                "reminder_sent": False,
-                                "last_reference": reference,
-                                "amount_paid": data.get("amount"),
-                                "currency": data.get("currency"),
-                                "customer_email": data.get("customer", {}).get("email"),
-                                "paystack_reference": reference,
-                                "referred_by": ref_code
-                            }
-                        },
-                        upsert=True
-                    )
-                    
-                    # Mark lead as converted
-                    leads_col.update_one(
-                        {"telegram_id": tg_id},
-                        {"$set": {"converted": True, "converted_at": now, "converted_channel": channel_type}}
-                    )
-                    
-                    # ── AFFILIATE TRACKING ─────────────────────────────────
-                    if ref_code and affiliates_col and referrals_col:
-                        affiliate = affiliates_col.find_one({"ref_code": ref_code, "is_active": True})
-                        if affiliate:
-                            commission_rate = COMMISSION_RENEWAL if is_renewal else COMMISSION_FIRST_SALE
-                            amount = data.get("amount", 0)
-                            commission = int(amount * commission_rate / 100)
-                            
-                            # Upsert referral record
-                            referrals_col.update_one(
-                                {"affiliate_id": affiliate["_id"], "customer_telegram_id": tg_id},
-                                {
-                                    "$setOnInsert": {
-                                        "affiliate_id": affiliate["_id"],
-                                        "ref_code": ref_code,
-                                        "customer_telegram_id": tg_id,
-                                        "customer_channel": channel_type,
-                                        "plan_key": metadata.get("plan_key", "unknown"),
-                                        "created_at": now,
-                                        "is_active": True
-                                    },
-                                    "$set": {
-                                        "last_payment": {
-                                            "amount": amount,
-                                            "currency": data.get("currency"),
-                                            "commission_paid": commission,
-                                            "commission_rate": commission_rate,
-                                            "paystack_reference": reference,
-                                            "paid_at": now,
-                                            "is_renewal": is_renewal
-                                        }
-                                    },
-                                    "$inc": {"total_payments": 1}
+            if users_col:
+                # Upsert user
+                users_col.update_one(
+                    {"telegram_id": tg_id, "channel_type": channel_type},
+                    {
+                        "$set": {
+                            "telegram_id": tg_id,
+                            "channel_type": channel_type,
+                            "purchased_at": now,
+                            "expires_at": expires,
+                            "is_active": True,
+                            "reminder_sent": False,
+                            "last_reference": reference,
+                            "amount_paid": data.get("amount"),
+                            "currency": data.get("currency"),
+                            "customer_email": data.get("customer", {}).get("email"),
+                            "paystack_reference": reference,
+                            "referred_by": ref_code
+                        }
+                    },
+                    upsert=True
+                )
+                
+                # Mark lead converted
+                leads_col.update_one(
+                    {"telegram_id": tg_id},
+                    {"$set": {"converted": True, "converted_at": now, "converted_channel": channel_type}}
+                )
+                
+                # ── AFFILIATE TRACKING ─────────────────────────────
+                if ref_code and affiliates_col and referrals_col:
+                    affiliate = affiliates_col.find_one({"ref_code": ref_code, "is_active": True})
+                    if affiliate:
+                        rate = COMMISSION_RENEWAL if is_renewal else COMMISSION_FIRST_SALE
+                        amount = data.get("amount", 0)
+                        commission = int(amount * rate / 100)
+                        
+                        referrals_col.update_one(
+                            {"affiliate_id": affiliate["_id"], "customer_telegram_id": tg_id},
+                            {
+                                "$setOnInsert": {
+                                    "affiliate_id": affiliate["_id"],
+                                    "ref_code": ref_code,
+                                    "customer_telegram_id": tg_id,
+                                    "customer_channel": channel_type,
+                                    "plan_key": meta.get("plan_key", "unknown"),
+                                    "created_at": now,
+                                    "is_active": True
                                 },
-                                upsert=True
-                            )
-                            
-                            # Update affiliate earnings
-                            affiliates_col.update_one(
-                                {"_id": affiliate["_id"]},
-                                {
-                                    "$inc": {"total_earnings": commission / 100, "total_referrals": 1 if not is_renewal else 0},
-                                    "$set": {"last_earning_at": now}
-                                }
-                            )
-                            
-                            logger.info(f"💰 Affiliate {ref_code} earned {commission_rate}% = {commission} from user {tg_id}")
-                    
-                except Exception as e:
-                    logger.error(f"❌ DB update failed: {e}")
-                    return JSONResponse({"status": "error", "detail": str(e)}, status_code=500)
-            else:
-                return JSONResponse({"status": "error", "detail": "Database offline"}, status_code=503)
+                                "$set": {
+                                    "last_payment": {
+                                        "amount": amount,
+                                        "currency": data.get("currency"),
+                                        "commission_paid": commission,
+                                        "commission_rate": rate,
+                                        "paystack_reference": reference,
+                                        "paid_at": now,
+                                        "is_renewal": is_renewal
+                                    }
+                                },
+                                "$inc": {"total_payments": 1}
+                            },
+                            upsert=True
+                        )
+                        
+                        affiliates_col.update_one(
+                            {"_id": affiliate["_id"]},
+                            {
+                                "$inc": {"total_earnings": commission / 100, "total_referrals": 0 if is_renewal else 1},
+                                "$set": {"last_earning_at": now}
+                            }
+                        )
+                        
+                        logger.info(f"💰 Affiliate {ref_code} earned {rate}% = {commission} from {tg_id}")
             
             # Send access link
             bot = Bot(token=BOT_TOKEN)
             try:
-                target_link = GOLD_PRIMARY_LINK if channel_type == "gold" else FOREX_PRIMARY_LINK
-                channel_name = "JAY GOLD MASTER VIP" if channel_type == "gold" else "JAY FX PREMIUM SIGNALS"
-                
-                btn = InlineKeyboardMarkup([[InlineKeyboardButton(f"🚀 Enter {channel_name}", url=target_link)]])
+                link = GOLD_PRIMARY_LINK if channel_type == "gold" else FOREX_PRIMARY_LINK
+                name = "JAY GOLD MASTER VIP" if channel_type == "gold" else "JAY FX PREMIUM SIGNALS"
+                btn = InlineKeyboardMarkup([[InlineKeyboardButton(f"🚀 Enter {name}", url=link)]])
                 await bot.send_message(
                     chat_id=tg_id,
-                    text=f"🎉 <b>PAYMENT VERIFIED!</b>\n\nPlan: <b>{channel_type.upper()}</b>\nDuration: <b>{days} days</b>\nExpires: <b>{expires_at.strftime('%B %d, %Y')}</b>\n\nTap below to join:",
+                    text=f"🎉 <b>PAYMENT VERIFIED!</b>\n\nPlan: <b>{channel_type.upper()}</b>\nDuration: <b>{days} days</b>\nExpires: <b>{expires.strftime('%B %d, %Y')}</b>\n\nTap below:",
                     parse_mode="HTML",
                     reply_markup=btn
                 )
-                logger.info(f"✅ Access message sent to {tg_id}")
             except Exception as e:
-                logger.error(f"❌ Failed to send access to {tg_id}: {e}")
-
+                logger.error(f"❌ Access message failed: {e}")
+        
         return {"status": "success"}
         
     except Exception as e:
-        logger.error(f"❌ Paystack webhook error: {e}")
+        logger.error(f"❌ Webhook error: {e}")
         return JSONResponse({"status": "error", "detail": str(e)}, status_code=500)
 
 # ==============================================================================
@@ -744,36 +783,36 @@ async def paystack_webhook(request: Request, x_paystack_signature: str = Header(
 # ==============================================================================
 
 @app.get("/admin/users")
-async def get_all_users():
+async def admin_users():
     if users_col is None:
-        return JSONResponse({"error": "Database not connected"}, status_code=503)
+        return JSONResponse({"error": "DB offline"}, status_code=503)
     users = list(users_col.find({}, {"_id": 0}))
     return {
-        "total_subscribers": len(users),
+        "total": len(users),
         "active": sum(1 for u in users if u.get("is_active")),
         "expired": sum(1 for u in users if not u.get("is_active")),
         "users": users
     }
 
 @app.get("/admin/leads")
-async def get_all_leads():
+async def admin_leads():
     if leads_col is None:
-        return JSONResponse({"error": "Database not connected"}, status_code=503)
+        return JSONResponse({"error": "DB offline"}, status_code=503)
     leads = list(leads_col.find({}, {"_id": 0}))
     return {
-        "total_leads": len(leads),
+        "total": len(leads),
         "converted": sum(1 for l in leads if l.get("converted")),
         "unconverted": sum(1 for l in leads if not l.get("converted")),
         "leads": leads
     }
 
 @app.get("/admin/affiliates")
-async def get_all_affiliates():
+async def admin_affiliates():
     if affiliates_col is None:
-        return JSONResponse({"error": "Database not connected"}, status_code=503)
+        return JSONResponse({"error": "DB offline"}, status_code=503)
     affs = list(affiliates_col.find({}, {"_id": 0, "bank_details": 0}))
     return {
-        "total_affiliates": len(affs),
+        "total": len(affs),
         "active": sum(1 for a in affs if a.get("is_active")),
         "milestone_reached": sum(1 for a in affs if a.get("milestone_notified")),
         "affiliates": affs
@@ -781,38 +820,29 @@ async def get_all_affiliates():
 
 @app.get("/admin/dashboard")
 async def admin_dashboard():
-    if users_col is None or leads_col is None or affiliates_col is None:
-        return JSONResponse({"error": "Database not connected"}, status_code=503)
+    if not all([users_col, leads_col, affiliates_col]):
+        return JSONResponse({"error": "DB offline"}, status_code=503)
     
     now = datetime.utcnow()
-    total_users = users_col.count_documents({})
-    active_users = users_col.count_documents({"is_active": True})
-    expired_users = users_col.count_documents({"is_active": False})
-    expiring_soon = users_col.count_documents({
-        "is_active": True,
-        "expires_at": {"$lte": now + timedelta(days=3), "$gt": now}
-    })
-    total_leads = leads_col.count_documents({})
-    converted_leads = leads_col.count_documents({"converted": True})
-    total_affs = affiliates_col.count_documents({"is_active": True})
-    milestone_affs = affiliates_col.count_documents({"milestone_notified": True})
     total_earnings = sum(a.get("total_earnings", 0) for a in affiliates_col.find())
     
     return {
         "subscribers": {
-            "total": total_users,
-            "active": active_users,
-            "expired": expired_users,
-            "expiring_in_3_days": expiring_soon
+            "total": users_col.count_documents({}),
+            "active": users_col.count_documents({"is_active": True}),
+            "expired": users_col.count_documents({"is_active": False}),
+            "expiring_3d": users_col.count_documents({
+                "is_active": True,
+                "expires_at": {"$lte": now + timedelta(days=3), "$gt": now}
+            })
         },
         "leads": {
-            "total": total_leads,
-            "converted": converted_leads,
-            "conversion_rate": f"{(converted_leads/total_leads*100):.1f}%" if total_leads > 0 else "0%"
+            "total": leads_col.count_documents({}),
+            "converted": leads_col.count_documents({"converted": True})
         },
         "affiliates": {
-            "total": total_affs,
-            "milestone_reached": milestone_affs,
+            "total": affiliates_col.count_documents({"is_active": True}),
+            "milestone_reached": affiliates_col.count_documents({"milestone_notified": True}),
             "total_payouts": round(total_earnings, 2)
         },
         "timestamp": now.isoformat()
