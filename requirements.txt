@@ -4,4 +4,3 @@ httpx>=0.25.0
 python-telegram-bot>=20.0
 pymongo>=4.6.0
 certifi>=2024.0.0
-python-jose>=3.3.0  # ← NEW (for crypto utilities, optional but good practice)
