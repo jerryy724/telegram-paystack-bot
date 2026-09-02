@@ -1,6 +1,32 @@
+"""
+server.py -- Jay Empire VIP Backend + Affiliate System
+With Paystack Split Payments, Auto-Payouts, and Milestone Rewards
+Africa-Wide: Bank Transfer + Mobile Money (Momo) Support
+Withdrawal Request System + Affiliate Portal + Admin Dashboard
+
+SECURITY REVISION NOTES (read before deploying):
+- Checkout price is now locked server-side via /api/initiate-payment, which calls
+  Paystack's Initialize Transaction endpoint. The Mini App no longer sends an amount
+  to Paystack directly -- it can't be tampered with in the browser anymore.
+- VIP channel invite links are no longer hardcoded in the front-end. Each paying
+  user gets a fresh, single-use Telegram invite link generated after payment.
+- All /admin/* and /cron/* endpoints now require an X-Admin-Key header matching
+  the ADMIN_API_KEY environment variable. Set this in Render before deploying.
+- The Telegram webhook now checks Telegram's secret_token header. Set
+  TELEGRAM_WEBHOOK_SECRET in Render (any random string) before deploying.
+- Automated Paystack payouts (Transfers) only work within the country your
+  Paystack business account is registered in. Set PAYSTACK_ACCOUNT_COUNTRY to
+  that country -- affiliates outside it are routed to manual payout instead of
+  a broken automated one. Mobile money recipienhts are Ghana/Kenya only on
+  Paystack; bank transfer recipients are Ghana/Nigeria/South Africa/Kenya only.
+- No minimum withdrawal threshold -- affiliates can withdraw their full
+  available balance, whatever it is.
+"""
+
 import os
 import asyncio
 import logging
+import ssl
 import certifi
 import hmac
 import hashlib
@@ -40,14 +66,17 @@ RENDER_URL = os.getenv("RENDER_EXTERNAL_URL", "https://telegram-paystack-bot-415
 
 GOLD_CHANNEL_ID = os.getenv("GOLD_CHANNEL_ID", "-1004329655598")
 FOREX_CHANNEL_ID = os.getenv("FOREX_CHANNEL_ID", "-1004451754852")
-ADMIN_USERNAME = "jay_empire247"ADMIN_TELEGRAM_ID = int(os.getenv("ADMIN_TELEGRAM_ID", "0"))
+ADMIN_USERNAME = "jay_empire247"
+ADMIN_TELEGRAM_ID = int(os.getenv("ADMIN_TELEGRAM_ID", "0"))
 
+# Required for the fixes below. Set these in Render's Environment tab.
 ADMIN_API_KEY = os.getenv("ADMIN_API_KEY", "")
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
+# The single country your Paystack account can actually pay out to automatically.
 PAYSTACK_ACCOUNT_COUNTRY = os.getenv("PAYSTACK_ACCOUNT_COUNTRY", "ghana").lower()
 
 # ==============================================================================
-# CANONICAL PRICING
+# CANONICAL PRICING (server is the source of truth -- never trust client amounts)
 # ==============================================================================
 PLANS = [
     {"key": "test", "name": "Test Phase", "usd": 0.10, "days": 1, "original": None, "is_test": True},
@@ -70,14 +99,17 @@ CURRENCY_RATES = {
 COMMISSION_FIRST_SALE = 50
 COMMISSION_RENEWAL = 35
 REFERRAL_MILESTONE = 10
+# No minimum withdrawal threshold -- affiliates can withdraw any available balance.
 
 # ==============================================================================
 # AFRICA PAYOUT CONFIGURATION
+# Trimmed to the countries Paystack Transfers actually supports. Momo recipients
+# are further restricted to Ghana/Kenya inside the flow below.
 # ==============================================================================
 AFRICA_COUNTRIES = {
     "ghana": {"name": "Ghana", "currency": "GHS", "flag": "🇬🇭"},
     "nigeria": {"name": "Nigeria", "currency": "NGN", "flag": "🇳🇬"},
-    "kenya": {"name": "Kenya", "currency": "KES", "flag": "🇰"},
+    "kenya": {"name": "Kenya", "currency": "KES", "flag": "🇰🇪"},
     "south_africa": {"name": "South Africa", "currency": "ZAR", "flag": "🇿🇦"},
 }
 MOMO_ELIGIBLE_COUNTRIES = {"ghana", "kenya"}
@@ -88,7 +120,8 @@ MOMO_ELIGIBLE_COUNTRIES = {"ghana", "kenya"}
 def init_mongodb():
     if not MONGO_URI:
         logger.error("MONGO_URI is not set!")
-        return None, None, None, None, None, None, None, None, None
+        return None, None, None, None, None, None, None, None
+
     try:
         client = MongoClient(
             MONGO_URI,
@@ -128,17 +161,19 @@ def init_mongodb():
         withdrawals_col.create_index([("affiliate_id", ASCENDING), ("status", ASCENDING)])
         withdrawals_col.create_index([("created_at", DESCENDING)])
         transactions_col.create_index([("affiliate_id", ASCENDING), ("created_at", DESCENDING)])
+        # Idempotency: a given Paystack reference can only be processed once.
         webhook_events_col.create_index([("reference", ASCENDING)], unique=True)
 
         return client, db, users_col, leads_col, affiliates_col, referrals_col, withdrawals_col, transactions_col, webhook_events_col
 
     except Exception as e:
         logger.error(f"MongoDB connection failed: {e}")
-        return None, None, None, None, None, None, None, None, None
+        return None, None, None, None, None, None, None, None
 
 _mongo_result = init_mongodb()
 if len(_mongo_result) == 9:
-    mongo_client, db, users_col, leads_col, affiliates_col, referrals_col, withdrawals_col, transactions_col, webhook_events_col = _mongo_resultelse:
+    mongo_client, db, users_col, leads_col, affiliates_col, referrals_col, withdrawals_col, transactions_col, webhook_events_col = _mongo_result
+else:
     mongo_client = db = users_col = leads_col = affiliates_col = referrals_col = withdrawals_col = transactions_col = webhook_events_col = None
 
 # ==============================================================================
@@ -146,6 +181,9 @@ if len(_mongo_result) == 9:
 # ==============================================================================
 def verify_admin(x_admin_key: Optional[str] = Header(None)):
     if not ADMIN_API_KEY:
+        # Fail closed: if you haven't set a key, nobody gets in -- including you.
+        # Set ADMIN_API_KEY in Render, then pass it as X-Admin-Key on every
+        # admin/cron request (e.g. Render Cron Job -> Header).
         raise HTTPException(status_code=503, detail="Admin API not configured (ADMIN_API_KEY unset)")
     if not x_admin_key or not hmac.compare_digest(x_admin_key, ADMIN_API_KEY):
         raise HTTPException(status_code=401, detail="Unauthorized")
@@ -175,7 +213,7 @@ async def create_paystack_transfer_recipient(name, account_number, bank_code, cu
         data = res.json()
         if data.get("status"):
             return data["data"]["recipient_code"]
-        logger.error(f"Transfer recipient creation failed: {data.get('message')} | Payload: {payload}")
+        logger.error(f"Transfer recipient creation failed: {data}")
         return None
 
 async def initiate_paystack_transfer(amount, recipient_code, reason, reference=None):
@@ -187,7 +225,8 @@ async def initiate_paystack_transfer(amount, recipient_code, reason, reference=N
         "amount": amount,
         "recipient": recipient_code,
         "reason": reason,
-        "reference": reference    }
+        "reference": reference
+    }
 
     async with httpx.AsyncClient() as client:
         res = await client.post(
@@ -204,15 +243,23 @@ async def initiate_paystack_transfer(amount, recipient_code, reason, reference=N
                 "reference": reference,
                 "status": data["data"]["status"]
             }
-        logger.error(f"Transfer initiation failed: {data.get('message')} | Payload: {payload}")
+        logger.error(f"Transfer initiation failed: {data}")
         return {"success": False, "error": data.get("message", "Unknown error")}
 
 async def get_paystack_bank_list(country="ghana", account_type="nuban", currency=None):
-    params = {"country": country}
+    """
+    account_type='nuban' -> regular bank list for a country (bank transfer).
+    account_type='mobile_money' -> live list of mobile money telcos for a
+    currency, fetched from Paystack directly instead of hardcoded, so this
+    never goes stale or uses the wrong code again.
+    """
+    params = {}
     if account_type == "mobile_money":
         params["type"] = "mobile_money"
         if currency:
             params["currency"] = currency
+    else:
+        params["country"] = country
 
     async with httpx.AsyncClient() as client:
         res = await client.get(
@@ -235,8 +282,11 @@ async def verify_bank_account(account_number, bank_code):
         return data["data"]["account_name"] if data.get("status") else None
 
 async def verify_paystack_transaction(reference):
+    """Defense in depth: confirm the transaction with Paystack directly
+    rather than trusting the webhook body alone."""
     async with httpx.AsyncClient() as client:
-        res = await client.get(            f"https://api.paystack.co/transaction/verify/{reference}",
+        res = await client.get(
+            f"https://api.paystack.co/transaction/verify/{reference}",
             headers=get_paystack_headers(),
             timeout=15.0
         )
@@ -285,7 +335,8 @@ async def start_cmd(update: Update, context):
     logger.info(f"/start from {chat_id} (@{username})")
 
     ref_code = None
-    if " " in text:        payload = text.split(" ", 1)[1].strip()
+    if " " in text:
+        payload = text.split(" ", 1)[1].strip()
         if payload.startswith("ref_"):
             ref_code = payload.replace("ref_", "")
             user_states[chat_id] = {"referred_by": ref_code}
@@ -315,12 +366,12 @@ async def start_cmd(update: Update, context):
     if affiliates_col is not None:
         is_affiliate = affiliates_col.find_one({"telegram_id": chat_id, "is_active": True})
 
-    kb = [[InlineKeyboardButton("Subscribe 📈", web_app=WebAppInfo(url=MINI_APP_URL))]]
+    kb = [[InlineKeyboardButton("📈 Subscribe", web_app=WebAppInfo(url=MINI_APP_URL))]]
 
     if is_affiliate is None:
         kb.append([InlineKeyboardButton("🤝 Become an Affiliate", callback_data="affiliate_start")])
     else:
-        kb.append([InlineKeyboardButton(" My Affiliate Dashboard", callback_data="affiliate_dashboard")])
+        kb.append([InlineKeyboardButton("📊 My Affiliate Dashboard", callback_data="affiliate_dashboard")])
         active_refs = 0
         if referrals_col is not None:
             active_refs = referrals_col.count_documents({
@@ -334,7 +385,8 @@ async def start_cmd(update: Update, context):
         "👑 <b>JAY EMPIRE VIP TERMINAL</b>\n"
         "<i>Success Is Our Aim</i>\n\n"
         "📈 <b>Subscribe</b> — get institutional-grade Gold &amp; FX signals\n"
-        "🤝 <b>Become an Affiliate</b> — earn commission sharing your link\n\n"        "Choose an option below to get started:"
+        "🤝 <b>Become an Affiliate</b> — earn commission sharing your link\n\n"
+        "Choose an option below to get started:"
     )
     if ref_code:
         welcome_text += f"\n\n🔗 <i>Referred by:</i> <code>{ref_code}</code>"
@@ -380,14 +432,15 @@ async def handle_affiliate_callback(chat_id, action, username=""):
     if action == "affiliate_start":
         kb = [
             [InlineKeyboardButton("✅ I Agree and Join", callback_data="affiliate_agree")],
-            [InlineKeyboardButton(" Back", callback_data="back_main")]
+            [InlineKeyboardButton("🔙 Back", callback_data="back_main")]
         ]
         terms = (
-            f" <b>Jay Empire Affiliate Program</b>\n\n"            f"<b> Commissions:</b>\n"
+            f"👑 <b>Jay Empire Affiliate Program</b>\n\n"
+            f"<b>💰 Commissions:</b>\n"
             f"- First Sale: {COMMISSION_FIRST_SALE}%\n"
             f"- Renewals: {COMMISSION_RENEWAL}%\n"
             f"- Lifetime tracking\n\n"
-            f"<b> Payout:</b> Request anytime. Instant processing to your configured payout method.\n\n"
+            f"<b>💸 Payout:</b> Request anytime, any amount. Processed within 24-48hrs.\n\n"
             f"<b>🏆 Bonus:</b> {REFERRAL_MILESTONE}+ active referrals = Lifetime VIP!\n\n"
             f"<b>📋 Rules:</b> No fake signups, no self-referrals, no spam. Self-referred sales earn no commission.\n\n"
             f"Tap 'I Agree and Join' to accept terms and set up your payout method."
@@ -432,7 +485,8 @@ async def handle_affiliate_callback(chat_id, action, username=""):
     elif action == "payout_method_bank":
         if chat_id in user_states:
             user_states[chat_id]["data"]["payout_method"] = "bank"
-            user_states[chat_id]["step"] = "awaiting_country_selection_bank"        await show_country_selection(chat_id, bot, "bank")
+            user_states[chat_id]["step"] = "awaiting_country_selection_bank"
+        await show_country_selection(chat_id, bot, "bank")
 
     elif action == "payout_method_momo":
         if chat_id in user_states:
@@ -481,7 +535,8 @@ async def handle_affiliate_callback(chat_id, action, username=""):
             _, provider_code = parts
             if chat_id in user_states:
                 user_states[chat_id]["data"]["momo_provider"] = provider_code
-                user_states[chat_id]["data"]["momo_provider_name"] = provider_code                user_states[chat_id]["step"] = "awaiting_momo_number"
+                user_states[chat_id]["data"]["momo_provider_name"] = provider_code
+                user_states[chat_id]["step"] = "awaiting_momo_number"
 
             await bot.send_message(
                 chat_id=chat_id,
@@ -501,7 +556,7 @@ async def show_main_menu(chat_id, bot):
     is_aff = None
     if affiliates_col is not None:
         is_aff = affiliates_col.find_one({"telegram_id": chat_id, "is_active": True})
-    kb = [[InlineKeyboardButton("Subscribe ", web_app=WebAppInfo(url=MINI_APP_URL))]]
+    kb = [[InlineKeyboardButton("📈 Subscribe", web_app=WebAppInfo(url=MINI_APP_URL))]]
     if is_aff is None:
         kb.append([InlineKeyboardButton("🤝 Become an Affiliate", callback_data="affiliate_start")])
     else:
@@ -530,7 +585,8 @@ async def show_affiliate_dashboard(chat_id, bot):
 
     pending_withdrawals = 0
     if withdrawals_col is not None:
-        pending_withdrawals = withdrawals_col.count_documents({            "affiliate_id": aff["_id"],
+        pending_withdrawals = withdrawals_col.count_documents({
+            "affiliate_id": aff["_id"],
             "status": "pending"
         })
 
@@ -540,7 +596,7 @@ async def show_affiliate_dashboard(chat_id, bot):
     payout_detail = ""
     if payout_method == "bank":
         bank = aff.get("bank_details", {})
-        payout_detail = f" Bank: {bank.get('bank_name','N/A')} ({bank.get('country_name','N/A')})"
+        payout_detail = f"🏦 Bank: {bank.get('bank_name','N/A')} ({bank.get('country_name','N/A')})"
     else:
         momo = aff.get("mobile_money_details", {})
         payout_detail = f"📱 Momo: {momo.get('provider_name','N/A')} | {momo.get('phone_number','N/A')} ({momo.get('country_name','N/A')})"
@@ -567,7 +623,7 @@ async def show_affiliate_dashboard(chat_id, bot):
         [InlineKeyboardButton("👥 My Referrals", callback_data="affiliate_referrals")],
         [InlineKeyboardButton("💸 Request Withdrawal", callback_data="request_withdrawal")],
         [InlineKeyboardButton("💳 Payout Info", callback_data="affiliate_payout_info")],
-        [InlineKeyboardButton(" Copy Link", callback_data=f"aff_copy:{aff['ref_code']}")],
+        [InlineKeyboardButton("🔗 Copy Link", callback_data=f"aff_copy:{aff['ref_code']}")],
         [InlineKeyboardButton("🔙 Back to Main", callback_data="back_main")]
     ]
 
@@ -579,7 +635,8 @@ async def show_affiliate_dashboard(chat_id, bot):
     )
 
 async def show_affiliate_statement(chat_id, bot):
-    aff = None    if affiliates_col is not None:
+    aff = None
+    if affiliates_col is not None:
         aff = affiliates_col.find_one({"telegram_id": chat_id})
 
     if aff is None:
@@ -628,7 +685,8 @@ async def show_affiliate_statement(chat_id, bot):
     statement_text += f"{'Total Out:':<25} <code>-${total_out:,.2f}</code>\n"
     statement_text += f"{'Balance:':<25} <b><code>${(total_in - total_out):,.2f}</code></b>"
 
-    kb = [[InlineKeyboardButton(" Back to Dashboard", callback_data="affiliate_dashboard")]]    await bot.send_message(
+    kb = [[InlineKeyboardButton("🔙 Back to Dashboard", callback_data="affiliate_dashboard")]]
+    await bot.send_message(
         chat_id=chat_id,
         text=statement_text,
         parse_mode="HTML",
@@ -653,14 +711,14 @@ async def show_affiliate_referrals(chat_id, bot):
     if not referrals:
         await bot.send_message(
             chat_id=chat_id,
-            text=" <b>Your Referrals</b>\n\nNo referrals yet. Share your link to start earning!",
+            text="👥 <b>Your Referrals</b>\n\nNo referrals yet. Share your link to start earning!",
             parse_mode="HTML"
         )
         return
 
     text = "👥 <b>Your Referrals</b>\n\n"
     for ref in referrals:
-        status = "🟢 Active" if ref.get("is_active") else " Inactive"
+        status = "🟢 Active" if ref.get("is_active") else "🔴 Inactive"
         last_payment = ref.get("last_payment", {})
         amount = last_payment.get("amount", 0) / 100 if last_payment else 0
         commission = last_payment.get("commission_paid", 0) / 100 if last_payment else 0
@@ -678,6 +736,7 @@ async def handle_withdrawal_request(chat_id, bot):
     aff = None
     if affiliates_col is not None:
         aff = affiliates_col.find_one({"telegram_id": chat_id})
+
     if aff is None:
         await bot.send_message(chat_id=chat_id, text="You are not registered as an affiliate.")
         return
@@ -702,31 +761,30 @@ async def handle_withdrawal_request(chat_id, bot):
     if available <= 0:
         await bot.send_message(
             chat_id=chat_id,
-            text="❌ Insufficient balance. You have $0.00 available to withdraw.",
+            text="❌ You don't have any available balance to withdraw yet.",
             parse_mode="HTML"
         )
         return
 
     kb = []
-    preset_amounts = [1, 5, 10, 25, 50, 100]
+    preset_amounts = [10, 25, 50, 100, 250]
     for amount in preset_amounts:
         if amount <= available:
             kb.append([InlineKeyboardButton(f"Withdraw ${amount}", callback_data=f"withdraw_confirm:{int(amount * 100)}")])
-    
-    if available > 0:
-        full_balance_cents = int(available * 100)
-        kb.append([InlineKeyboardButton(f"Withdraw Full Balance (${available:,.2f})", callback_data=f"withdraw_confirm:{full_balance_cents}")])
 
+    full_cents = int(round(available * 100))
+    kb.append([InlineKeyboardButton(f"💰 Withdraw Full Balance (${available:,.2f})", callback_data=f"withdraw_confirm:{full_cents}")])
     kb.append([InlineKeyboardButton("🔙 Cancel", callback_data="affiliate_dashboard")])
 
     await bot.send_message(
         chat_id=chat_id,
-        text=f"💸 <b>Request Withdrawal</b>\n\nAvailable Balance: <code>${available:,.2f}</code>\n\nSelect an amount to withdraw instantly:",
+        text=f"💸 <b>Request Withdrawal</b>\n\nAvailable Balance: <code>${available:,.2f}</code>\n\nNo minimum — select an amount, or withdraw it all:",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(kb)
     )
 
-async def process_withdrawal_confirmation(chat_id, amount_cents, bot):    aff = None
+async def process_withdrawal_confirmation(chat_id, amount_cents, bot):
+    aff = None
     if affiliates_col is not None:
         aff = affiliates_col.find_one({"telegram_id": chat_id})
 
@@ -734,16 +792,6 @@ async def process_withdrawal_confirmation(chat_id, amount_cents, bot):    aff = 
         return
 
     amount = amount_cents / 100
-    total_earnings = aff.get("total_earnings", 0)
-    total_withdrawn = aff.get("total_withdrawn", 0)
-    
-    if total_earnings - total_withdrawn < amount:
-        await bot.send_message(
-            chat_id=chat_id,
-            text="❌ Insufficient balance for this withdrawal amount.",
-            parse_mode="HTML"
-        )
-        return
 
     withdrawal_doc = {
         "affiliate_id": aff["_id"],
@@ -755,12 +803,12 @@ async def process_withdrawal_confirmation(chat_id, amount_cents, bot):    aff = 
         "amount_cents": amount_cents,
         "payout_method": aff.get("payout_method", "bank"),
         "payout_details": aff.get("bank_details") if aff.get("payout_method") == "bank" else aff.get("mobile_money_details"),
-        "status": "processing",
-        "admin_approved": True,
-        "admin_notes": "Auto-approved instant withdrawal",
+        "status": "pending",
+        "admin_approved": False,
+        "admin_notes": "",
         "paystack_transfer_code": None,
         "created_at": datetime.utcnow(),
-        "processed_at": datetime.utcnow()
+        "processed_at": None
     }
 
     if withdrawals_col is not None:
@@ -770,73 +818,15 @@ async def process_withdrawal_confirmation(chat_id, amount_cents, bot):    aff = 
         affiliate_id=aff["_id"],
         transaction_type="withdrawal_request",
         amount=amount,
-        description=f"Auto withdrawal request of ${amount:,.2f}",
+        description=f"Withdrawal request of ${amount:,.2f}",
         reference=str(withdrawal_doc.get("_id", datetime.utcnow()))
     )
 
     await bot.send_message(
-        chat_id=chat_id,        text=f" <b>Processing Withdrawal...</b>\n\nAmount: ${amount:,.2f}\nPlease wait a moment while we process your payment.",
+        chat_id=chat_id,
+        text=f"✅ <b>Withdrawal Request Submitted!</b>\n\nAmount: ${amount:,.2f}\nStatus: Pending\n\nSent to admin for approval. Processing time: 24-48 hours.",
         parse_mode="HTML"
     )
-
-    update_result = affiliates_col.find_one_and_update(
-        {"_id": aff["_id"], "total_earnings": {"$gte": total_withdrawn + amount}},
-        {"$inc": {"total_withdrawn": amount}, "$set": {"last_withdrawal_at": datetime.utcnow()}},
-        return_document=True
-    )
-
-    if not update_result:
-        if withdrawals_col is not None:
-            withdrawals_col.update_one({"_id": withdrawal_doc["_id"]}, {"$set": {"status": "failed", "admin_notes": "Insufficient balance / Race condition"}})
-        await bot.send_message(
-            chat_id=chat_id,
-            text="❌ Withdrawal failed: Insufficient balance or concurrent request detected. Please try again.",
-            parse_mode="HTML"
-        )
-        return
-
-    recipient = aff.get("paystack_transfer_recipient")
-    if recipient:
-        transfer_result = await initiate_paystack_transfer(
-            amount=amount_cents,
-            recipient_code=recipient,
-            reason=f"Affiliate instant withdrawal - {aff['ref_code']}"
-        )
-    else:
-        transfer_result = {"success": False, "error": "No payout recipient configured. Contact admin."}
-
-    if transfer_result.get("success"):
-        if withdrawals_col is not None:
-            withdrawals_col.update_one(
-                {"_id": withdrawal_doc["_id"]},
-                {"$set": {"status": "approved", "paystack_transfer_code": transfer_result.get("transfer_code")}}
-            )
-        log_affiliate_transaction(
-            affiliate_id=aff["_id"],
-            transaction_type="withdrawal",
-            amount=amount,
-            description=f"Auto withdrawal approved: ${amount:,.2f}",
-            reference=transfer_result.get("reference")
-        )
-        await bot.send_message(
-            chat_id=chat_id,
-            text=f"✅ <b>Withdrawal Successful!</b>\n\nAmount: ${amount:,.2f}\nStatus: Processed\n\nYour payment is on its way to your {aff.get('payout_method', 'account')}!",
-            parse_mode="HTML"
-        )
-    else:
-        if withdrawals_col is not None:            withdrawals_col.update_one(
-                {"_id": withdrawal_doc["_id"]},
-                {"$set": {"status": "failed", "admin_notes": transfer_result.get("error", "Unknown error")}}
-            )
-        affiliates_col.update_one(
-            {"_id": aff["_id"]},
-            {"$inc": {"total_withdrawn": -amount}}
-        )
-        await bot.send_message(
-            chat_id=chat_id,
-            text=f"❌ <b>Withdrawal Failed</b>\n\nAmount: ${amount:,.2f}\nReason: {transfer_result.get('error', 'Unknown error')}\n\nYour balance has been restored. Please contact @{ADMIN_USERNAME} for assistance.",
-            parse_mode="HTML"
-        )
 
     try:
         payout_info = ""
@@ -847,23 +837,21 @@ async def process_withdrawal_confirmation(chat_id, amount_cents, bot):    aff = 
             momo = aff.get("mobile_money_details", {})
             payout_info = f"Provider: {momo.get('provider_name','N/A')}\nNumber: {momo.get('phone_number','N/A')}"
 
-        status_text = "✅ SUCCESS" if transfer_result.get("success") else "❌ FAILED"
         await bot.send_message(
             chat_id=ADMIN_TELEGRAM_ID,
             text=(
-                f"🚨 <b>Auto Withdrawal {status_text}</b>\n\n"
+                f"🚨 <b>New Withdrawal Request</b>\n\n"
                 f"Affiliate: {aff.get('full_name', 'N/A')} (@{aff.get('username', 'N/A')})\n"
                 f"Code: <code>{aff['ref_code']}</code>\n"
                 f"Amount: ${amount:,.2f}\n"
                 f"Method: {aff.get('payout_method', 'N/A').upper()}\n"
-                f"{payout_info}\n"
-                f"Paystack Ref: {transfer_result.get('reference', 'N/A')}\n"
-                f"Error: {transfer_result.get('error', 'None')}"
+                f"{payout_info}\n\n"
+                f"Approve via admin API: POST /admin/withdrawals/{{id}}/approve (X-Admin-Key required)"
             ),
             parse_mode="HTML"
         )
     except Exception as e:
-        logger.error(f"Failed to notify admin of auto-withdrawal: {e}")
+        logger.error(f"Failed to notify admin of withdrawal: {e}")
 
 async def show_payout_info(chat_id, bot):
     aff = None
@@ -873,7 +861,8 @@ async def show_payout_info(chat_id, bot):
         payout_method = aff.get("payout_method", "bank")
         if payout_method == "bank":
             b = aff.get("bank_details", {})
-            await bot.send_message(                chat_id=chat_id,
+            await bot.send_message(
+                chat_id=chat_id,
                 text=f"💳 Payout Details (Bank Transfer)\n\nBank: {b.get('bank_name','N/A')}\nAccount: ****{b.get('account_number','0000')[-4:]}\nName: {b.get('account_name','N/A')}\nCountry: {b.get('country_name','N/A')}\n\nAutomatic via Paystack.",
                 parse_mode="HTML"
             )
@@ -922,7 +911,8 @@ async def show_bank_selection(chat_id, bot, country):
     )
 
 async def show_momo_provider_selection(chat_id, bot, country):
-    currency = AFRICA_COUNTRIES.get(country, {}).get("currency", "GHS")    providers = await get_paystack_bank_list(country, account_type="mobile_money", currency=currency)
+    currency = AFRICA_COUNTRIES.get(country, {}).get("currency", "GHS")
+    providers = await get_paystack_bank_list(country, account_type="mobile_money", currency=currency)
     if not providers:
         await bot.send_message(
             chat_id=chat_id,
@@ -944,6 +934,8 @@ async def show_momo_provider_selection(chat_id, bot, country):
 # SUBSCRIPTION MANAGEMENT
 # ==============================================================================
 async def generate_single_use_invite(channel_id: str):
+    """Fresh, single-use invite link -- never a static link embedded anywhere
+    the public can read it."""
     bot = Bot(token=BOT_TOKEN)
     try:
         link = await bot.create_chat_invite_link(
@@ -971,13 +963,14 @@ async def kick_from_channel(user_id: int, channel_id: str, channel_type: str):
         logger.info(f"Kicked {user_id} from {channel_type}")
         return True
     except Exception as e:
-        logger.error(f"Kick failed {user_id}: {e}")        return False
+        logger.error(f"Kick failed {user_id}: {e}")
+        return False
 
 async def send_reminder(user_id: int, channel_type: str, days_left: int):
     bot = Bot(token=BOT_TOKEN)
     name = "JAY GOLD MASTER VIP" if channel_type == "gold" else "JAY FX PREMIUM SIGNALS"
     try:
-        kb = InlineKeyboardMarkup([[InlineKeyboardButton("Subscribe 📈", web_app=WebAppInfo(url=MINI_APP_URL))]])
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton("Renew Now", web_app=WebAppInfo(url=MINI_APP_URL))]])
         await bot.send_message(
             chat_id=user_id,
             text=f"{name} expires in {days_left} day(s).\nRenew now to avoid removal.",
@@ -1010,7 +1003,7 @@ async def run_daily_checks():
         })
         for lead in unconverted:
             try:
-                kb = InlineKeyboardMarkup([[InlineKeyboardButton("Subscribe 📈", web_app=WebAppInfo(url=MINI_APP_URL))]])
+                kb = InlineKeyboardMarkup([[InlineKeyboardButton("Enter VIP Terminal", web_app=WebAppInfo(url=MINI_APP_URL))]])
                 await Bot(token=BOT_TOKEN).send_message(
                     chat_id=lead["telegram_id"],
                     text="Jay Empire VIP Market Alert\n\nHigh-precision trade setups are active now. Tap below:",
@@ -1020,7 +1013,8 @@ async def run_daily_checks():
                 leads_col.update_one({"_id": lead["_id"]}, {"$set": {"followup_sent": True}})
                 results["leads_followed"] += 1
             except Exception as e:
-                results["errors"].append(f"lead_{lead['telegram_id']}: {str(e)}")    except Exception as e:
+                results["errors"].append(f"lead_{lead['telegram_id']}: {str(e)}")
+    except Exception as e:
         results["errors"].append(f"leads: {str(e)}")
 
     try:
@@ -1069,7 +1063,8 @@ async def lifespan(app: FastAPI):
 
     webhook_target = f"{RENDER_URL.rstrip('/')}/telegram-webhook"
     bot = Bot(token=BOT_TOKEN)
-    if TELEGRAM_WEBHOOK_SECRET:        await bot.set_webhook(url=webhook_target, secret_token=TELEGRAM_WEBHOOK_SECRET)
+    if TELEGRAM_WEBHOOK_SECRET:
+        await bot.set_webhook(url=webhook_target, secret_token=TELEGRAM_WEBHOOK_SECRET)
     else:
         logger.warning("TELEGRAM_WEBHOOK_SECRET is not set -- webhook is unauthenticated. Set it in Render.")
         await bot.set_webhook(url=webhook_target)
@@ -1093,7 +1088,7 @@ async def health():
     return {
         "status": "active",
         "mongodb": "connected" if db is not None else "disconnected",
-        "service": "Jay Empire VIP + Affiliate (Africa-Wide + Instant Withdrawals)",
+        "service": "Jay Empire VIP + Affiliate (Africa-Wide + Withdrawals)",
         "timestamp": datetime.utcnow().isoformat()
     }
 
@@ -1109,6 +1104,8 @@ async def health_db():
 
 @app.get("/api/plans")
 async def api_plans():
+    """Lets the Mini App fetch canonical pricing instead of hardcoding it,
+    so front-end and back-end can never drift apart."""
     return {"plans": PLANS, "currency_rates": CURRENCY_RATES}
 
 class InitiatePaymentRequest(BaseModel):
@@ -1118,8 +1115,15 @@ class InitiatePaymentRequest(BaseModel):
     currency: str
     ref_code: Optional[str] = None
     email: Optional[str] = None
+
 @app.post("/api/initiate-payment")
 async def api_initiate_payment(payload: InitiatePaymentRequest):
+    """
+    The only place an amount is ever decided. The Mini App calls this first,
+    gets back an access_code, and hands that to Paystack's popup. The client
+    never gets to tell Paystack how much to charge -- closing the price
+    tampering hole in the old flow.
+    """
     plan = PLANS_BY_KEY.get(payload.plan_key)
     if plan is None:
         raise HTTPException(status_code=400, detail="Invalid plan")
@@ -1167,7 +1171,8 @@ async def api_initiate_payment(payload: InitiatePaymentRequest):
         )
         data = res.json()
 
-    if not data.get("status"):        logger.error(f"Paystack initialize failed: {data}")
+    if not data.get("status"):
+        logger.error(f"Paystack initialize failed: {data}")
         raise HTTPException(status_code=502, detail="Could not start payment. Please try again.")
 
     return {
@@ -1194,7 +1199,7 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: Op
 
         try:
             await Bot(token=BOT_TOKEN).answer_callback_query(callback_query_id=query["id"])
-        except Exception:
+        except:
             pass
 
         if action.startswith("aff_bank:"):
@@ -1216,7 +1221,8 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: Op
             if chat_id not in user_states:
                 return {"status": "ok"}
             state = user_states[chat_id]
-            d = state["data"]            payout_method = d.get("payout_method", "bank")
+            d = state["data"]
+            payout_method = d.get("payout_method", "bank")
             currency = d.get("currency", "GHS")
 
             if payout_method == "bank":
@@ -1265,7 +1271,8 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: Op
                 }
 
             ref_code = generate_ref_code()
-            aff_doc = {                "telegram_id": chat_id,
+            aff_doc = {
+                "telegram_id": chat_id,
                 "username": username,
                 "full_name": d["full_name"],
                 "ref_code": ref_code,
@@ -1294,7 +1301,8 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: Op
                     f"Your Link:\n{ref_link}\n\n"
                     f"Commissions: {COMMISSION_FIRST_SALE}% first | {COMMISSION_RENEWAL}% renewal\n"
                     f"Bonus: {REFERRAL_MILESTONE}+ refs = Lifetime VIP\n"
-                    f"Payout Method: {payout_text}\n\n"
+                    f"Payout Method: {payout_text}\n"
+                    f"No minimum withdrawal — cash out anytime.\n\n"
                     f"Start sharing now!"
                 ),
                 parse_mode="HTML"
@@ -1314,7 +1322,8 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: Op
             await telegram_app.process_update(update)
             return {"status": "ok"}
 
-        if chat_id in user_states:            state = user_states[chat_id]
+        if chat_id in user_states:
+            state = user_states[chat_id]
             step = state.get("step")
             bot = Bot(token=BOT_TOKEN)
 
@@ -1363,7 +1372,8 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: Op
 
                 kb = [
                     [InlineKeyboardButton("Confirm and Create", callback_data="affiliate_confirm")],
-                    [InlineKeyboardButton("Start Over", callback_data="affiliate_agree")]                ]
+                    [InlineKeyboardButton("Start Over", callback_data="affiliate_agree")]
+                ]
                 await bot.send_message(
                     chat_id=chat_id,
                     text=f"Confirm:\n\nName: {state['data']['full_name']}\nCountry: {state['data'].get('country_name', 'N/A')}\nProvider: {state['data'].get('momo_provider_name', 'N/A')}\nNumber: {text}\n\nTap confirm to start earning!",
@@ -1398,6 +1408,8 @@ async def paystack_webhook(request: Request, x_paystack_signature: str = Header(
             data = payload["data"]
             reference = data.get("reference", "unknown")
 
+            # Idempotency: Paystack retries webhooks. Without this, a retry
+            # would double-extend access and double-pay commission.
             if webhook_events_col is not None:
                 try:
                     webhook_events_col.insert_one({"reference": reference, "processed_at": datetime.utcnow()})
@@ -1405,6 +1417,8 @@ async def paystack_webhook(request: Request, x_paystack_signature: str = Header(
                     logger.info(f"Duplicate webhook for {reference}, skipping.")
                     return {"status": "already_processed"}
 
+            # Defense in depth: confirm directly with Paystack rather than
+            # trusting the webhook body alone.
             verified = await verify_paystack_transaction(reference)
             if verified is None or verified.get("status") != "success":
                 logger.warning(f"Transaction {reference} failed verification, not fulfilling.")
@@ -1412,6 +1426,7 @@ async def paystack_webhook(request: Request, x_paystack_signature: str = Header(
             if verified.get("amount") != data.get("amount"):
                 logger.warning(f"Amount mismatch for {reference}: webhook={data.get('amount')} verify={verified.get('amount')}")
                 return {"status": "amount_mismatch"}
+
             meta = data.get("metadata", {}) or {}
 
             tg_id = meta.get("telegram_id")
@@ -1430,6 +1445,8 @@ async def paystack_webhook(request: Request, x_paystack_signature: str = Header(
             if users_col is not None:
                 existing = users_col.find_one({"telegram_id": tg_id, "channel_type": channel_type})
 
+            # Extend from the current expiry if still active, instead of
+            # resetting to now + days (which used to cost early renewers days).
             if existing and existing.get("is_active") and existing.get("expires_at") and existing["expires_at"] > now:
                 expires = existing["expires_at"] + timedelta(days=days)
             else:
@@ -1461,7 +1478,8 @@ async def paystack_webhook(request: Request, x_paystack_signature: str = Header(
 
                 if leads_col is not None:
                     leads_col.update_one(
-                        {"telegram_id": tg_id},                        {"$set": {"converted": True, "converted_at": now, "converted_channel": channel_type}}
+                        {"telegram_id": tg_id},
+                        {"$set": {"converted": True, "converted_at": now, "converted_channel": channel_type}}
                     )
 
                 if ref_code and affiliates_col is not None and referrals_col is not None:
@@ -1510,7 +1528,8 @@ async def paystack_webhook(request: Request, x_paystack_signature: str = Header(
                             }
                         )
 
-                        log_affiliate_transaction(                            affiliate_id=affiliate["_id"],
+                        log_affiliate_transaction(
+                            affiliate_id=affiliate["_id"],
                             transaction_type="commission",
                             amount=commission_dollars,
                             description=f"{'Renewal' if is_renewal else 'First sale'} commission from user {tg_id}",
@@ -1556,10 +1575,11 @@ async def paystack_webhook(request: Request, x_paystack_signature: str = Header(
         return JSONResponse({"status": "error", "detail": str(e)}, status_code=500)
 
 # ==============================================================================
-# ADMIN ENDPOINTS
+# ADMIN ENDPOINTS (all require X-Admin-Key header == ADMIN_API_KEY)
 # ==============================================================================
 
-@app.post("/cron/daily-check")async def cron_daily(_: bool = Depends(verify_admin)):
+@app.post("/cron/daily-check")
+async def cron_daily(_: bool = Depends(verify_admin)):
     return JSONResponse({
         "status": "completed",
         "results": await run_daily_checks(),
@@ -1608,6 +1628,7 @@ async def admin_affiliates(_: bool = Depends(verify_admin)):
 async def admin_affiliates_detailed(_: bool = Depends(verify_admin)):
     if affiliates_col is None:
         return JSONResponse({"error": "DB offline"}, status_code=503)
+
     affs = list(affiliates_col.find({}))
     detailed = []
     for aff in affs:
@@ -1657,7 +1678,8 @@ async def admin_dashboard(_: bool = Depends(verify_admin)):
         "leads": {
             "total": leads_col.count_documents({}),
             "converted": leads_col.count_documents({"converted": True})
-        },        "affiliates": {
+        },
+        "affiliates": {
             "total": affiliates_col.count_documents({"is_active": True}),
             "milestone_reached": affiliates_col.count_documents({"milestone_notified": True}),
             "total_payouts": round(total_earnings, 2),
@@ -1707,6 +1729,7 @@ async def admin_get_withdrawals(status: str = "pending", _: bool = Depends(verif
             "affiliate_total_earnings": aff.get("total_earnings", 0) if aff else 0,
             "affiliate_total_withdrawn": aff.get("total_withdrawn", 0) if aff else 0
         })
+
     return {
         "status": status,
         "count": len(enriched),
@@ -1723,7 +1746,7 @@ async def admin_approve_withdrawal(withdrawal_id: str, notes: str = "", _: bool 
 
     try:
         withdrawal = withdrawals_col.find_one({"_id": ObjectId(withdrawal_id)})
-    except Exception:
+    except:
         return JSONResponse({"error": "Invalid withdrawal ID"}, status_code=400)
 
     if withdrawal is None:
@@ -1755,7 +1778,8 @@ async def admin_approve_withdrawal(withdrawal_id: str, notes: str = "", _: bool 
     withdrawals_col.update_one(
         {"_id": ObjectId(withdrawal_id)},
         {
-            "$set": {                "status": "approved",
+            "$set": {
+                "status": "approved",
                 "admin_approved": True,
                 "admin_notes": notes,
                 "processed_at": now,
@@ -1805,9 +1829,10 @@ async def admin_reject_withdrawal(withdrawal_id: str, notes: str = "", _: bool =
         return JSONResponse({"error": "DB offline"}, status_code=503)
 
     from bson.objectid import ObjectId
+
     try:
         withdrawal = withdrawals_col.find_one({"_id": ObjectId(withdrawal_id)})
-    except Exception:
+    except:
         return JSONResponse({"error": "Invalid withdrawal ID"}, status_code=400)
 
     if withdrawal is None:
@@ -1853,6 +1878,7 @@ async def admin_reject_withdrawal(withdrawal_id: str, notes: str = "", _: bool =
         "reason": notes,
         "processed_at": now.isoformat()
     }
+
 # ==============================================================================
 # RUN
 # ==============================================================================
