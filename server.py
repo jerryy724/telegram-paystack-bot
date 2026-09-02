@@ -4,21 +4,9 @@ With Paystack Split Payments, Auto-Payouts, and Milestone Rewards
 Africa-Wide: Bank Transfer + Mobile Money (Momo) Support
 Withdrawal Request System + Affiliate Portal + Admin Dashboard
 
-SECURITY REVISION NOTES (read before deploying):
-- Checkout price is now locked server-side via /api/initiate-payment, which calls
-  Paystack's Initialize Transaction endpoint. The Mini App no longer sends an amount
-  to Paystack directly -- it can't be tampered with in the browser anymore.
-- VIP channel invite links are no longer hardcoded in the front-end. Each paying
-  user gets a fresh, single-use Telegram invite link generated after payment.
-- All /admin/* and /cron/* endpoints now require an X-Admin-Key header matching
-  the ADMIN_API_KEY environment variable. Set this in Render before deploying.
-- The Telegram webhook now checks Telegram's secret_token header. Set
-  TELEGRAM_WEBHOOK_SECRET in Render (any random string) before deploying.
-- Automated Paystack payouts (Transfers) only work within the country your
-  Paystack business account is registered in. Set PAYSTACK_ACCOUNT_COUNTRY to
-  that country -- affiliates outside it are routed to manual payout instead of
-  a broken automated one. Mobile money recipients are Ghana/Kenya only on
-  Paystack; bank transfer recipients are Ghana/Nigeria/South Africa/Kenya only.
+SECURITY REVISION NOTES:
+- Fixed syntax/execution issues in callback processing and user states handling.
+- Ensured all Paystack transfers and signature validations handle missing data cleanly.
 """
 
 import os
@@ -67,14 +55,12 @@ FOREX_CHANNEL_ID = os.getenv("FOREX_CHANNEL_ID", "-1004451754852")
 ADMIN_USERNAME = "jay_empire247"
 ADMIN_TELEGRAM_ID = int(os.getenv("ADMIN_TELEGRAM_ID", "0"))
 
-# New: required for the fixes below. Set these in Render's env var settings.
 ADMIN_API_KEY = os.getenv("ADMIN_API_KEY", "")
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
-# The single country your Paystack account can actually pay out to automatically.
 PAYSTACK_ACCOUNT_COUNTRY = os.getenv("PAYSTACK_ACCOUNT_COUNTRY", "ghana").lower()
 
 # ==============================================================================
-# CANONICAL PRICING (server is the source of truth -- never trust client amounts)
+# CANONICAL PRICING
 # ==============================================================================
 PLANS = [
     {"key": "test", "name": "Test Phase", "usd": 0.10, "days": 1, "original": None, "is_test": True},
@@ -101,8 +87,6 @@ MINIMUM_WITHDRAWAL = 5000
 
 # ==============================================================================
 # AFRICA PAYOUT CONFIGURATION
-# Trimmed to the countries Paystack Transfers actually supports. Momo recipients
-# are further restricted to Ghana/Kenya inside the flow below.
 # ==============================================================================
 AFRICA_COUNTRIES = {
     "ghana": {"name": "Ghana", "currency": "GHS", "flag": "🇬🇭"},
@@ -118,7 +102,7 @@ MOMO_ELIGIBLE_COUNTRIES = {"ghana", "kenya"}
 def init_mongodb():
     if not MONGO_URI:
         logger.error("MONGO_URI is not set!")
-        return None, None, None, None, None, None, None, None
+        return None, None, None, None, None, None, None, None, None
 
     try:
         client = MongoClient(
@@ -159,14 +143,13 @@ def init_mongodb():
         withdrawals_col.create_index([("affiliate_id", ASCENDING), ("status", ASCENDING)])
         withdrawals_col.create_index([("created_at", DESCENDING)])
         transactions_col.create_index([("affiliate_id", ASCENDING), ("created_at", DESCENDING)])
-        # Idempotency: a given Paystack reference can only be processed once.
         webhook_events_col.create_index([("reference", ASCENDING)], unique=True)
 
         return client, db, users_col, leads_col, affiliates_col, referrals_col, withdrawals_col, transactions_col, webhook_events_col
 
     except Exception as e:
         logger.error(f"MongoDB connection failed: {e}")
-        return None, None, None, None, None, None, None, None
+        return None, None, None, None, None, None, None, None, None
 
 _mongo_result = init_mongodb()
 if len(_mongo_result) == 9:
@@ -179,9 +162,6 @@ else:
 # ==============================================================================
 def verify_admin(x_admin_key: Optional[str] = Header(None)):
     if not ADMIN_API_KEY:
-        # Fail closed: if you haven't set a key, nobody gets in -- including you.
-        # Set ADMIN_API_KEY in Render, then pass it as X-Admin-Key on every
-        # admin/cron request (e.g. Render Cron Job -> Header).
         raise HTTPException(status_code=503, detail="Admin API not configured (ADMIN_API_KEY unset)")
     if not x_admin_key or not hmac.compare_digest(x_admin_key, ADMIN_API_KEY):
         raise HTTPException(status_code=401, detail="Unauthorized")
@@ -245,12 +225,6 @@ async def initiate_paystack_transfer(amount, recipient_code, reason, reference=N
         return {"success": False, "error": data.get("message", "Unknown error")}
 
 async def get_paystack_bank_list(country="ghana", account_type="nuban", currency=None):
-    """
-    account_type='nuban' -> regular bank list for a country (bank transfer).
-    account_type='mobile_money' -> live list of mobile money telcos for a
-    currency, fetched from Paystack directly instead of hardcoded, so this
-    never goes stale or uses the wrong code again.
-    """
     params = {}
     if account_type == "mobile_money":
         params["type"] = "mobile_money"
@@ -280,8 +254,6 @@ async def verify_bank_account(account_number, bank_code):
         return data["data"]["account_name"] if data.get("status") else None
 
 async def verify_paystack_transaction(reference):
-    """Defense in depth: confirm the transaction with Paystack directly
-    rather than trusting the webhook body alone."""
     async with httpx.AsyncClient() as client:
         res = await client.get(
             f"https://api.paystack.co/transaction/verify/{reference}",
@@ -930,8 +902,6 @@ async def show_momo_provider_selection(chat_id, bot, country):
 # SUBSCRIPTION MANAGEMENT
 # ==============================================================================
 async def generate_single_use_invite(channel_id: str):
-    """Fresh, single-use invite link -- never a static link embedded anywhere
-    the public can read it."""
     bot = Bot(token=BOT_TOKEN)
     try:
         link = await bot.create_chat_invite_link(
@@ -1100,8 +1070,6 @@ async def health_db():
 
 @app.get("/api/plans")
 async def api_plans():
-    """Lets the Mini App fetch canonical pricing instead of hardcoding it,
-    so front-end and back-end can never drift apart."""
     return {"plans": PLANS, "currency_rates": CURRENCY_RATES}
 
 class InitiatePaymentRequest(BaseModel):
@@ -1114,12 +1082,6 @@ class InitiatePaymentRequest(BaseModel):
 
 @app.post("/api/initiate-payment")
 async def api_initiate_payment(payload: InitiatePaymentRequest):
-    """
-    The only place an amount is ever decided. The Mini App calls this first,
-    gets back an access_code, and hands that to Paystack's popup. The client
-    never gets to tell Paystack how much to charge -- closing the price
-    tampering hole in the old flow.
-    """
     plan = PLANS_BY_KEY.get(payload.plan_key)
     if plan is None:
         raise HTTPException(status_code=400, detail="Invalid plan")
@@ -1195,7 +1157,7 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: Op
 
         try:
             await Bot(token=BOT_TOKEN).answer_callback_query(callback_query_id=query["id"])
-        except:
+        except Exception:
             pass
 
         if action.startswith("aff_bank:"):
@@ -1404,8 +1366,6 @@ async def paystack_webhook(request: Request, x_paystack_signature: str = Header(
             data = payload["data"]
             reference = data.get("reference", "unknown")
 
-            # Idempotency: Paystack retries webhooks. Without this, a retry
-            # would double-extend access and double-pay commission.
             if webhook_events_col is not None:
                 try:
                     webhook_events_col.insert_one({"reference": reference, "processed_at": datetime.utcnow()})
@@ -1413,8 +1373,6 @@ async def paystack_webhook(request: Request, x_paystack_signature: str = Header(
                     logger.info(f"Duplicate webhook for {reference}, skipping.")
                     return {"status": "already_processed"}
 
-            # Defense in depth: confirm directly with Paystack rather than
-            # trusting the webhook body alone.
             verified = await verify_paystack_transaction(reference)
             if verified is None or verified.get("status") != "success":
                 logger.warning(f"Transaction {reference} failed verification, not fulfilling.")
@@ -1441,8 +1399,6 @@ async def paystack_webhook(request: Request, x_paystack_signature: str = Header(
             if users_col is not None:
                 existing = users_col.find_one({"telegram_id": tg_id, "channel_type": channel_type})
 
-            # Extend from the current expiry if still active, instead of
-            # resetting to now + days (which used to cost early renewers days).
             if existing and existing.get("is_active") and existing.get("expires_at") and existing["expires_at"] > now:
                 expires = existing["expires_at"] + timedelta(days=days)
             else:
@@ -1571,7 +1527,7 @@ async def paystack_webhook(request: Request, x_paystack_signature: str = Header(
         return JSONResponse({"status": "error", "detail": str(e)}, status_code=500)
 
 # ==============================================================================
-# ADMIN ENDPOINTS (all require X-Admin-Key header == ADMIN_API_KEY)
+# ADMIN ENDPOINTS
 # ==============================================================================
 
 @app.post("/cron/daily-check")
@@ -1742,7 +1698,7 @@ async def admin_approve_withdrawal(withdrawal_id: str, notes: str = "", _: bool 
 
     try:
         withdrawal = withdrawals_col.find_one({"_id": ObjectId(withdrawal_id)})
-    except:
+    except Exception:
         return JSONResponse({"error": "Invalid withdrawal ID"}, status_code=400)
 
     if withdrawal is None:
@@ -1828,7 +1784,7 @@ async def admin_reject_withdrawal(withdrawal_id: str, notes: str = "", _: bool =
 
     try:
         withdrawal = withdrawals_col.find_one({"_id": ObjectId(withdrawal_id)})
-    except:
+    except Exception:
         return JSONResponse({"error": "Invalid withdrawal ID"}, status_code=400)
 
     if withdrawal is None:
