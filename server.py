@@ -1,10 +1,3 @@
-"""
-server.py -- Jay Empire VIP Backend + Affiliate System
-With Paystack Split Payments, Auto-Payouts, and Milestone Rewards
-Africa-Wide: Bank Transfer + Mobile Money (Momo) Support
-Instant Withdrawal Request System + Affiliate Portal + Admin Dashboard
-"""
-
 import os
 import asyncio
 import logging
