@@ -857,34 +857,6 @@
                         <span class="region-flag">🇬🇭</span>
                         <span class="region-name">Ghana<br><span class="region-currency">Ghanaian Cedi</span></span>
                     </button>
-                    <button class="region-btn" onclick="chooseCurrency('NGN', '₦')">
-                        <span class="region-flag">🇳🇬</span>
-                        <span class="region-name">Nigeria<br><span class="region-currency">Nigerian Naira</span></span>
-                    </button>
-                    <button class="region-btn" onclick="chooseCurrency('ZAR', 'R ')">
-                        <span class="region-flag">🇿🇦</span>
-                        <span class="region-name">South Africa<br><span class="region-currency">South African Rand</span></span>
-                    </button>
-                    <button class="region-btn" onclick="chooseCurrency('KES', 'KSh ')">
-                        <span class="region-flag">🇰🇪</span>
-                        <span class="region-name">Kenya<br><span class="region-currency">Kenyan Shilling</span></span>
-                    </button>
-                    <button class="region-btn" onclick="chooseCurrency('USD', '$')">
-                        <span class="region-flag">🌍</span>
-                        <span class="region-name">International<br><span class="region-currency">US Dollar</span></span>
-                    </button>
-                    <button class="region-btn" onclick="chooseCurrency('GBP', '£')">
-                        <span class="region-flag">🇬🇧</span>
-                        <span class="region-name">United Kingdom<br><span class="region-currency">British Pound</span></span>
-                    </button>
-                    <button class="region-btn" onclick="chooseCurrency('EUR', '€')">
-                        <span class="region-flag">🇪🇺</span>
-                        <span class="region-name">Eurozone<br><span class="region-currency">Euro</span></span>
-                    </button>
-                    <button class="region-btn" onclick="chooseCurrency('XOF', 'CFA ')">
-                        <span class="region-flag">🌍</span>
-                        <span class="region-name">Francophone WA<br><span class="region-currency">CFA Franc</span></span>
-                    </button>
                 </div>
             </div>
 
@@ -905,7 +877,7 @@
                 <p class="card-desc" id="summary-desc">Review your subscription details</p>
 
                 <div class="affiliate-notice" id="affiliate-notice">
-                    <div class="affiliate-label">💰 An affiliate will receive commission from this payment</div>
+                    <div class="affiliate-label">💰 Referral attribution is handled automatically by Telegram.</div>
                     <div class="affiliate-code" id="affiliate-code-display"></div>
                 </div>
 
@@ -1030,24 +1002,10 @@
         // it must match RENDER_EXTERNAL_URL in server.py.
         const BACKEND_URL = "https://telegram-paystack-bot-415x.onrender.com";
 
-        // ── AFFILIATE DETECTION ─────────────────────────────────────────────
-        let affiliateRefCode = null;
-        try {
-            const initData = tg.initDataUnsafe;
-            if (initData && initData.start_param && initData.start_param.startsWith('ref_')) {
-                affiliateRefCode = initData.start_param.replace('ref_', '');
-            }
-        } catch(e) {
-            console.log('No start_param');
-        }
-        if (!affiliateRefCode) {
-            const urlParams = new URLSearchParams(window.location.search);
-            const refFromUrl = urlParams.get('ref');
-            if (refFromUrl) affiliateRefCode = refFromUrl;
-        }
-        // ── END AFFILIATE DETECTION ─────────────────────────────────────────
+        // Referral attribution is intentionally NOT accepted from the browser.
+// The backend reads the referral stored from the bot's /start deep link.
 
-        // State
+// State
         let targetChannel = '';
         let targetChannelTitle = '';
         let selectedPlan = null;
@@ -1060,7 +1018,7 @@
         // longer changes what Paystack charges.
         const CURRENCY_RATES = { GHS: 15.50, NGN: 1600.0, ZAR: 18.20, KES: 130.0, USD: 1.0, GBP: 0.78, EUR: 0.92, XOF: 605.0 };
         const plans = [
-            { key: 'test', name: 'Test Phase', usd: 0.10, days: 1, isTest: true, original: 1.00 },
+            { key: 'test', name: 'Test Phase', usd: 0.10, days: 1, isTest: true, original: null },
             { key: '1m', name: '1 Month Access', usd: 15, days: 30, isTest: false, original: 25 },
             { key: '3m', name: '3 Months Access', usd: 40, days: 90, isTest: false, original: 60 },
             { key: '6m', name: '6 Months Access', usd: 80, days: 180, isTest: false, original: 120 },
@@ -1172,13 +1130,8 @@
             }
 
             const affNotice = document.getElementById('affiliate-notice');
-            const affCodeDisplay = document.getElementById('affiliate-code-display');
-            if (affiliateRefCode) {
-                affNotice.style.display = 'block';
-                affCodeDisplay.textContent = `Code: ${affiliateRefCode}`;
-            } else {
-                affNotice.style.display = 'none';
-            }
+            affNotice.style.display = 'block';
+            document.getElementById('affiliate-code-display').textContent = 'Attribution is verified server-side.';
 
             document.getElementById('tc-checkbox').checked = false;
             document.getElementById('pay-btn').disabled = true;
@@ -1210,9 +1163,38 @@
             btn.disabled = !cb.checked;
         }
 
+        async function pollPayment(reference, initData) {
+            for (let attempt = 0; attempt < 60; attempt++) {
+                await new Promise(resolve => setTimeout(resolve, 2000));
+                try {
+                    const res = await fetch(`${BACKEND_URL}/api/payment-status?reference=${encodeURIComponent(reference)}`, {
+                        headers: { 'X-Telegram-Init-Data': initData }
+                    });
+                    if (!res.ok) continue;
+                    const data = await res.json();
+                    if (data.status === 'fulfilled') {
+                        switchStep('success');
+                        return true;
+                    }
+                    if (data.status === 'failed') {
+                        throw new Error('Payment failed. Please try again.');
+                    }
+                } catch (e) {
+                    console.log('Payment status check:', e);
+                }
+            }
+            return false;
+        }
+
         async function proceedToPaystack() {
             if (!hasReadTC || !document.getElementById('tc-checkbox').checked) {
                 tg.showAlert ? tg.showAlert("Please read and accept the Terms & Conditions.") : alert("Please read and accept the Terms & Conditions.");
+                return;
+            }
+
+            if (!tg.initData) {
+                const msg = "Please open this terminal from the Jay Empire Telegram bot. Secure Telegram authentication is required.";
+                tg.showAlert ? tg.showAlert(msg) : alert(msg);
                 return;
             }
 
@@ -1221,49 +1203,33 @@
             const originalLabel = payBtn.textContent;
             payBtn.textContent = 'Processing...';
 
-            const user = tg.initDataUnsafe?.user;
-
             try {
-                // Step 1: ask our backend to lock in the price and open a
-                // transaction with Paystack. The browser never tells Paystack
-                // an amount directly.
                 const initRes = await fetch(`${BACKEND_URL}/api/initiate-payment`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
-                        telegram_id: user?.id || 0,
+                        init_data: tg.initData,
                         channel_type: targetChannel,
                         plan_key: selectedPlan.key,
-                        currency: activeCurrency,
-                        ref_code: affiliateRefCode
+                        currency: activeCurrency
                     })
                 });
                 const initData = await initRes.json();
-                if (!initRes.ok) {
-                    throw new Error(initData.detail || 'Could not start payment.');
-                }
+                if (!initRes.ok) throw new Error(initData.detail || 'Could not start payment.');
 
-                // Step 2: open the Paystack popup against that locked-in transaction.
-                const PopupCtor = window.PaystackPop || window.Paystack;
-                const popup = new PopupCtor();
-                popup.resumeTransaction(initData.access_code, {
-                    onSuccess: function() {
-                        switchStep('success');
-                        payBtn.disabled = false;
-                        payBtn.textContent = originalLabel;
-                    },
-                    onCancel: function() {
-                        payBtn.disabled = false;
-                        payBtn.textContent = originalLabel;
-                    },
-                    onError: function(err) {
-                        tg.showAlert ? tg.showAlert('Payment error: ' + (err?.message || 'please try again.')) : alert('Payment error.');
-                        payBtn.disabled = false;
-                        payBtn.textContent = originalLabel;
-                    }
-                });
+                if (!window.PaystackPop) throw new Error('Payment checkout failed to load. Please try again.');
+
+                const popup = new PaystackPop();
+                popup.resumeTransaction(initData.access_code);
+
+                payBtn.textContent = 'Waiting for payment...';
+                const completed = await pollPayment(initData.reference, tg.initData);
+                if (!completed) {
+                    tg.showAlert ? tg.showAlert("Payment status is still pending. If payment was completed, access will be delivered automatically.") : alert("Payment status is still pending.");
+                }
             } catch (err) {
-                tg.showAlert ? tg.showAlert(err.message) : alert(err.message);
+                tg.showAlert ? tg.showAlert(err.message || 'Payment error.') : alert(err.message || 'Payment error.');
+            } finally {
                 payBtn.disabled = false;
                 payBtn.textContent = originalLabel;
             }
