@@ -121,6 +121,8 @@ def normalize_local_phone(raw: str, calling_code: str) -> str:
 # ==============================================================================
 # MONGODB
 # ==============================================================================
+onboarding_col = None
+
 def init_mongodb():
     if not MONGO_URI:
         logger.error("MONGO_URI is not set!")
@@ -153,6 +155,7 @@ def init_mongodb():
         webhook_events_col = db["webhook_events"]
         payment_intents_col = db["payment_intents"]
         customers_col = db["customers"]
+        onboarding_col = db["affiliate_onboarding"]
 
         users_col.create_index([("telegram_id", ASCENDING), ("channel_type", ASCENDING)], unique=True)
         users_col.create_index([("expires_at", ASCENDING)])
@@ -176,6 +179,7 @@ def init_mongodb():
         payment_intents_col.create_index([("reference", ASCENDING)], unique=True)
         payment_intents_col.create_index([("telegram_id", ASCENDING), ("created_at", DESCENDING)])
         customers_col.create_index([("telegram_id", ASCENDING)], unique=True)
+        onboarding_col.create_index([("telegram_id", ASCENDING)], unique=True)
 
         # Migrate the old floating-point wallet fields once, preserving balances.
         for aff in affiliates_col.find({"wallet_earned_minor": {"$exists": False}},
@@ -198,8 +202,9 @@ def init_mongodb():
 _mongo_result = init_mongodb()
 if len(_mongo_result) == 11:
     mongo_client, db, users_col, leads_col, affiliates_col, referrals_col, withdrawals_col, transactions_col, webhook_events_col, payment_intents_col, customers_col = _mongo_result
+    onboarding_col = db["affiliate_onboarding"] if db is not None else None
 else:
-    mongo_client = db = users_col = leads_col = affiliates_col = referrals_col = withdrawals_col = transactions_col = webhook_events_col = payment_intents_col = customers_col = None
+    mongo_client = db = users_col = leads_col = affiliates_col = referrals_col = withdrawals_col = transactions_col = webhook_events_col = payment_intents_col = customers_col = onboarding_col = None
 
 # ==============================================================================
 # ADMIN AUTH DEPENDENCY
@@ -304,7 +309,28 @@ def log_affiliate_transaction(affiliate_id, transaction_type, amount, descriptio
 # TELEGRAM BOT & STATE SETUP
 # ==============================================================================
 telegram_app = Application.builder().token(BOT_TOKEN).build()
-user_states = {}
+# Affiliate onboarding is persisted in MongoDB instead of process memory.
+# This prevents the flow from disappearing after a Render restart/redeploy and
+# also makes the confirmation button independent of local server memory.
+
+def save_affiliate_onboarding(telegram_id, step, data):
+    if onboarding_col is None:
+        return False
+    onboarding_col.update_one(
+        {"telegram_id": int(telegram_id)},
+        {"$set": {"telegram_id": int(telegram_id), "step": step, "data": data, "updated_at": datetime.utcnow()}},
+        upsert=True,
+    )
+    return True
+
+def get_affiliate_onboarding(telegram_id):
+    if onboarding_col is None:
+        return None
+    return onboarding_col.find_one({"telegram_id": int(telegram_id)})
+
+def clear_affiliate_onboarding(telegram_id):
+    if onboarding_col is not None:
+        onboarding_col.delete_one({"telegram_id": int(telegram_id)})
 
 async def start_cmd(update: Update, context):
     user = update.effective_user
@@ -437,26 +463,12 @@ telegram_app.add_handler(CallbackQueryHandler(callback_handler))
 # AFFILIATE CALLBACK HANDLERS
 # ==============================================================================
 
-async def show_payout_method(chat_id, bot):
-    kb = [
-        [InlineKeyboardButton("🏦 Bank Transfer", callback_data="payout_method_bank")],
-        [InlineKeyboardButton("📱 Mobile Money", callback_data="payout_method_momo")],
-        [InlineKeyboardButton("🔙 Back", callback_data="affiliate_start")]
-    ]
-    await bot.send_message(
-        chat_id=chat_id,
-        text="Step 2/3: Choose your payout method.\n\nYour payout details are stored only for our internal records. Paystack is used only for customer subscription payments.",
-        reply_markup=InlineKeyboardMarkup(kb)
-    )
-
 async def show_affiliate_confirmation(chat_id, bot):
-    state = user_states.get(chat_id)
+    state = get_affiliate_onboarding(chat_id)
     if not state:
-        await bot.send_message(chat_id=chat_id, text="Your affiliate setup session expired. Please start again.")
+        await bot.send_message(chat_id=chat_id, text="Your affiliate setup session expired. Tap Become an Affiliate and start again.")
         return
     d = state.get("data", {})
-    method = d.get("payout_method", "bank")
-    label = "Bank Transfer" if method == "bank" else "Mobile Money"
     details = d.get("payout_details_input", "")
     kb = [
         [InlineKeyboardButton("✅ Confirm and Create", callback_data="affiliate_confirm")],
@@ -466,11 +478,11 @@ async def show_affiliate_confirmation(chat_id, bot):
     await bot.send_message(
         chat_id=chat_id,
         text=(
-            f"<b>Final Check</b>\n\n"
+            f"<b>Confirm Affiliate Account</b>\n\n"
             f"Name: {html.escape(str(d.get('full_name', '')))}\n"
-            f"Payout Method: {label}\n"
-            f"Payout Details: {html.escape(str(details))}\n\n"
-            "Tap <b>Confirm and Create</b> and your affiliate account will be created immediately."
+            f"Mobile Money: {html.escape(str(d.get('payout_details_input', '')))}\n\n"
+            "If these details are correct, tap <b>Confirm and Create</b>. "
+            "Your affiliate account will be created directly in MongoDB and your unique referral link will be generated."
         ),
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(kb)
@@ -503,23 +515,27 @@ async def handle_affiliate_callback(chat_id, action, username=""):
             [InlineKeyboardButton("🔙 Back", callback_data="back_main")]
         ]
         terms = (
-            f"👑 <b>Jay Empire Affiliate Program</b>\n\n"
-            f"<b>💰 Commissions:</b>\n"
-            f"- First Sale: {COMMISSION_FIRST_SALE}%\n"
-            f"- Renewals: {COMMISSION_RENEWAL}%\n"
-            f"- Lifetime tracking\n\n"
-            f"<b>💸 Payout:</b> Request when your balance reaches GHS {MIN_WITHDRAWAL_MINOR/100:,.2f}. Processed manually within 24-48hrs.\n\n"
-            f"<b>🏆 Bonus:</b> {REFERRAL_MILESTONE}+ active referrals = Lifetime VIP!\n\n"
-            f"<b>📋 Rules:</b> No fake signups, no self-referrals, no spam. Self-referred sales earn no commission.\n\n"
-            f"Tap 'I Agree and Join' to accept terms and set up your payout method."
+            f"👑 <b>JAY Trading Hub Affiliate Program</b>\n\n"
+            f"<b>💰 Commission:</b> {COMMISSION_FIRST_SALE}% on a first qualifying sale and {COMMISSION_RENEWAL}% on renewals.\n"
+            f"<b>🏆 Milestone:</b> {REFERRAL_MILESTONE} active referrals = Lifetime VIP reward.\n"
+            f"<b>💸 Withdrawal:</b> Minimum GHS {MIN_WITHDRAWAL_MINOR/100:,.2f}; payouts are sent manually by JAY Trading Hub.\n\n"
+            f"No fake signups, self-referrals or spam. By joining, you agree to these terms and to provide accurate payout information.\n\n"
+            "Tap <b>I Agree and Join</b> to continue."
         )
         await bot.send_message(chat_id=chat_id, text=terms, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(kb))
 
     elif action == "affiliate_agree":
-        user_states[chat_id] = {"step": "awaiting_full_name", "data": {}}
+        save_affiliate_onboarding(chat_id, "awaiting_affiliate_details", {})
         await bot.send_message(
             chat_id=chat_id,
-            text="Step 1/3: Enter your Full Name (as on ID / account):",
+            text=(
+                "<b>Affiliate Setup</b>\n\n"
+                "Send your details in ONE message using this format:\n\n"
+                "<code>Full Name - Mobile Money Number</code>\n\n"
+                "Example:\n"
+                "<code>John Doe - 0241234567</code>\n\n"
+                "Use the MoMo number that should receive your manual affiliate payouts."
+            ),
             parse_mode="HTML"
         )
 
@@ -549,30 +565,6 @@ async def handle_affiliate_callback(chat_id, action, username=""):
 
     elif action == "back_main":
         await show_main_menu(chat_id, bot)
-
-    elif action == "payout_method_bank":
-        state = user_states.get(chat_id)
-        if not state:
-            await bot.send_message(chat_id=chat_id, text="Your affiliate setup session expired. Please start again.")
-            return
-        state["data"]["payout_method"] = "bank"
-        state["step"] = "awaiting_bank_details"
-        await bot.send_message(
-            chat_id=chat_id,
-            text="Step 3/3: Send your bank details in one message.\n\nExample: GCB Bank - Account 1234567890 - Account Name John Doe"
-        )
-
-    elif action == "payout_method_momo":
-        state = user_states.get(chat_id)
-        if not state:
-            await bot.send_message(chat_id=chat_id, text="Your affiliate setup session expired. Please start again.")
-            return
-        state["data"]["payout_method"] = "momo"
-        state["step"] = "awaiting_momo_details"
-        await bot.send_message(
-            chat_id=chat_id,
-            text="Step 3/3: Send your Mobile Money details in one message.\n\nExample: MTN MoMo - 0241234567 - Account Name John Doe"
-        )
 
     elif action.startswith("withdraw_confirm:"):
         amount = int(action.split(":")[1])
@@ -1229,23 +1221,36 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: Op
             pass
 
         if action == "affiliate_confirm":
-            if chat_id not in user_states:
+            logger.info("Affiliate confirm clicked for Telegram ID %s", chat_id)
+            state = get_affiliate_onboarding(chat_id)
+            if not state or state.get("step") != "awaiting_confirmation":
+                await Bot(token=BOT_TOKEN).send_message(
+                    chat_id=chat_id,
+                    text="⚠️ This affiliate setup session is no longer active. Tap Become an Affiliate and start again."
+                )
                 return {"status": "ok"}
             existing_affiliate = affiliates_col.find_one({"telegram_id": chat_id, "is_active": True}) if affiliates_col is not None else None
             if existing_affiliate:
                 await Bot(token=BOT_TOKEN).send_message(chat_id=chat_id, text=f"You are already an affiliate. Your referral link is:\nhttps://t.me/{BOT_USERNAME}?start=ref_{existing_affiliate['ref_code']}")
-                del user_states[chat_id]
+                clear_affiliate_onboarding(chat_id)
                 return {"status": "ok"}
-            state = user_states[chat_id]
-            d = state["data"]
-            payout_method = d.get("payout_method", "bank")
-            payout_details = {"manual_payout_details": d.get("payout_details_input", "").strip()}
+            d = state.get("data", {})
+            full_name = str(d.get("full_name", "")).strip()
+            momo_number = str(d.get("payout_details_input", "")).strip()
+            if len(full_name) < 2 or not re.fullmatch(r"0[0-9]{9}", momo_number):
+                await Bot(token=BOT_TOKEN).send_message(
+                    chat_id=chat_id,
+                    text="⚠️ Your affiliate details are incomplete. Tap Become an Affiliate and enter: Full Name - Mobile Money Number"
+                )
+                return {"status": "ok"}
+            payout_method = "momo"
+            payout_details = {"manual_payout_details": momo_number}
 
             ref_code = generate_ref_code()
             aff_doc = {
                 "telegram_id": chat_id,
                 "username": username,
-                "full_name": d["full_name"],
+                "full_name": full_name,
                 "ref_code": ref_code,
                 "payout_method": payout_method,
                 "country": d.get("country", ""),
@@ -1254,6 +1259,9 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: Op
                 "total_earnings": 0,
                 "total_withdrawn": 0,
                 "total_referrals": 0,
+                "wallet_earned_minor": 0,
+                "wallet_withdrawn_minor": 0,
+                "wallet_reserved_minor": 0,
                 "is_active": True,
                 "milestone_notified": False,
                 "created_at": datetime.utcnow(),
@@ -1273,7 +1281,7 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: Op
                         chat_id=chat_id,
                         text=f"You already have an affiliate account.\n\nYour referral link:\nhttps://t.me/{BOT_USERNAME}?start=ref_{existing['ref_code']}"
                     )
-                    del user_states[chat_id]
+                    clear_affiliate_onboarding(chat_id)
                     return {"status": "ok"}
                 await bot.send_message(chat_id=chat_id, text="⚠️ Could not create the affiliate account. Please try again.")
                 return {"status": "error"}
@@ -1319,7 +1327,7 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: Op
                 ),
                 parse_mode="HTML"
             )
-            del user_states[chat_id]
+            clear_affiliate_onboarding(chat_id)
             return {"status": "ok"}
 
         await handle_affiliate_callback(chat_id, action, username)
@@ -1334,30 +1342,47 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: Op
             await telegram_app.process_update(update)
             return {"status": "ok"}
 
-        if chat_id in user_states:
-            state = user_states[chat_id]
+        state = get_affiliate_onboarding(chat_id)
+        if state:
             step = state.get("step")
             bot = Bot(token=BOT_TOKEN)
 
-            if step == "awaiting_full_name":
-                full_name = text.strip()
-                if len(full_name) < 2:
-                    await bot.send_message(chat_id=chat_id, text="Please enter a valid full name.")
+            if step == "awaiting_affiliate_details":
+                raw = text.strip()
+                parts = re.split(r"\s*[-–—]\s*", raw, maxsplit=1)
+                if len(parts) != 2:
+                    parts = re.split(r"\s*\|\s*", raw, maxsplit=1)
+                if len(parts) != 2:
+                    await bot.send_message(
+                        chat_id=chat_id,
+                        text="Please use this exact format:\n\nFull Name - Mobile Money Number\n\nExample: John Doe - 0241234567"
+                    )
                     return {"status": "ok"}
-                state["data"]["full_name"] = full_name
-                state["step"] = "awaiting_payout_method"
-                await show_payout_method(chat_id, bot)
-                return {"status": "ok"}
 
-            elif step in ("awaiting_bank_details", "awaiting_momo_details"):
-                details = text.strip()
-                if len(details) < 5:
-                    await bot.send_message(chat_id=chat_id, text="Please enter complete payout details so the admin can pay you manually.")
+                full_name = parts[0].strip()
+                phone_raw = parts[1].strip()
+                phone_digits = "".join(ch for ch in phone_raw if ch.isdigit())
+                if len(phone_digits) == 12 and phone_digits.startswith("233"):
+                    phone_digits = "0" + phone_digits[3:]
+                if not re.fullmatch(r"0[0-9]{9}", phone_digits):
+                    await bot.send_message(
+                        chat_id=chat_id,
+                        text="Please enter a valid Ghana Mobile Money number, for example 0241234567."
+                    )
                     return {"status": "ok"}
-                state["data"]["payout_details_input"] = details
-                state["step"] = "awaiting_confirmation"
+                if len(full_name) < 2:
+                    await bot.send_message(chat_id=chat_id, text="Please enter your full name.")
+                    return {"status": "ok"}
+
+                data_for_state = {
+                    "full_name": full_name,
+                    "payout_details_input": phone_digits,
+                    "payout_method": "momo",
+                }
+                save_affiliate_onboarding(chat_id, "awaiting_confirmation", data_for_state)
                 await show_affiliate_confirmation(chat_id, bot)
                 return {"status": "ok"}
+
 
     update = Update.de_json(data, telegram_app.bot)
     await telegram_app.process_update(update)
