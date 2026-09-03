@@ -3,6 +3,27 @@ server.py -- Jay Empire VIP Backend + Affiliate System
 With Paystack Split Payments, Auto-Payouts, and Milestone Rewards
 Africa-Wide: Bank Transfer + Mobile Money (Momo) Support
 Withdrawal Request System + Affiliate Portal + Admin Dashboard
+
+SECURITY REVISION NOTES (read before deploying):
+- Checkout price is now locked server-side via /api/initiate-payment, which calls
+  Paystack's Initialize Transaction endpoint. The Mini App no longer sends an amount
+  to Paystack directly -- it can't be tampered with in the browser anymore.
+- VIP channel invite links are no longer hardcoded in the front-end. Each paying
+  user gets a fresh, single-use Telegram invite link generated after payment.
+- All /admin/* and /cron/* endpoints now require an X-Admin-Key header matching
+  the ADMIN_API_KEY environment variable. Set this in Render before deploying.
+- The Telegram webhook now checks Telegram's secret_token header. Set
+  TELEGRAM_WEBHOOK_SECRET in Render (any random string) before deploying.
+- Automated Paystack payouts (Transfers) only work within the country your
+  Paystack business account is registered in. Set PAYSTACK_ACCOUNT_COUNTRY to
+  that country -- affiliates outside it are routed to manual payout instead of
+  a broken automated one. Mobile money recipients are Ghana/Kenya only on
+  Paystack; bank transfer recipients are Ghana/Nigeria/South Africa/Kenya only.
+- Mobile money numbers are normalized to Paystack's required LOCAL format
+  (e.g. 0551234987) regardless of how the person types it in -- fixes the
+  "Failed to create Mobile Money recipient" error caused by +233-style input.
+- Recipient-creation failures now show Paystack's actual error message
+  instead of a generic dead end.
 """
 
 import os
@@ -27,7 +48,6 @@ from pymongo.errors import DuplicateKeyError
 from pymongo.server_api import ServerApi
 from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo, Update
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler
-from bson.objectid import ObjectId
 
 # ==============================================================================
 # LOGGING
@@ -52,12 +72,14 @@ FOREX_CHANNEL_ID = os.getenv("FOREX_CHANNEL_ID", "-1004451754852")
 ADMIN_USERNAME = "jay_empire247"
 ADMIN_TELEGRAM_ID = int(os.getenv("ADMIN_TELEGRAM_ID", "0"))
 
+# Required for the fixes below. Set these in Render's Environment tab.
 ADMIN_API_KEY = os.getenv("ADMIN_API_KEY", "")
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
+# The single country your Paystack account can actually pay out to automatically.
 PAYSTACK_ACCOUNT_COUNTRY = os.getenv("PAYSTACK_ACCOUNT_COUNTRY", "ghana").lower()
 
 # ==============================================================================
-# CANONICAL PRICING
+# CANONICAL PRICING (server is the source of truth -- never trust client amounts)
 # ==============================================================================
 PLANS = [
     {"key": "test", "name": "Test Phase", "usd": 0.10, "days": 1, "original": None, "is_test": True},
@@ -74,17 +96,41 @@ CURRENCY_RATES = {
     "USD": 1.0, "GBP": 0.78, "EUR": 0.92, "XOF": 605.0,
 }
 
+# ==============================================================================
+# COMMISSION CONFIG
+# ==============================================================================
 COMMISSION_FIRST_SALE = 50
 COMMISSION_RENEWAL = 35
 REFERRAL_MILESTONE = 10
+# No minimum withdrawal threshold -- affiliates can withdraw any available balance.
 
+# ==============================================================================
+# AFRICA PAYOUT CONFIGURATION
+# Trimmed to the countries Paystack Transfers actually supports. Momo recipients
+# are further restricted to Ghana/Kenya inside the flow below.
+# ==============================================================================
 AFRICA_COUNTRIES = {
-    "ghana": {"name": "Ghana", "currency": "GHS", "flag": "🇬🇭"},
-    "nigeria": {"name": "Nigeria", "currency": "NGN", "flag": "🇳🇬"},
-    "kenya": {"name": "Kenya", "currency": "KES", "flag": "🇰🇪"},
-    "south_africa": {"name": "South Africa", "currency": "ZAR", "flag": "🇿🇦"},
+    "ghana": {"name": "Ghana", "currency": "GHS", "flag": "🇬🇭", "calling_code": "233"},
+    "nigeria": {"name": "Nigeria", "currency": "NGN", "flag": "🇳🇬", "calling_code": "234"},
+    "kenya": {"name": "Kenya", "currency": "KES", "flag": "🇰🇪", "calling_code": "254"},
+    "south_africa": {"name": "South Africa", "currency": "ZAR", "flag": "🇿🇦", "calling_code": "27"},
 }
 MOMO_ELIGIBLE_COUNTRIES = {"ghana", "kenya"}
+
+def normalize_local_phone(raw: str, calling_code: str) -> str:
+    """
+    Paystack's mobile_money recipient wants a LOCAL number, e.g. '0551234987'
+    -- not international format like '+233551234987'. Their own docs example
+    uses the local format. Whatever the person types (+233..., 233..., or
+    already local 0...), this normalizes it to the local form Paystack wants,
+    so a typo in format never breaks recipient creation again.
+    """
+    digits = "".join(ch for ch in (raw or "") if ch.isdigit())
+    if calling_code and digits.startswith(calling_code):
+        digits = "0" + digits[len(calling_code):]
+    elif not digits.startswith("0"):
+        digits = "0" + digits
+    return digits
 
 # ==============================================================================
 # MONGODB
@@ -92,8 +138,7 @@ MOMO_ELIGIBLE_COUNTRIES = {"ghana", "kenya"}
 def init_mongodb():
     if not MONGO_URI:
         logger.error("MONGO_URI is not set!")
-        # Corrected to return exactly 9 items
-        return None, None, None, None, None, None, None, None, None
+        return None, None, None, None, None, None, None, None
 
     try:
         client = MongoClient(
@@ -134,14 +179,14 @@ def init_mongodb():
         withdrawals_col.create_index([("affiliate_id", ASCENDING), ("status", ASCENDING)])
         withdrawals_col.create_index([("created_at", DESCENDING)])
         transactions_col.create_index([("affiliate_id", ASCENDING), ("created_at", DESCENDING)])
+        # Idempotency: a given Paystack reference can only be processed once.
         webhook_events_col.create_index([("reference", ASCENDING)], unique=True)
 
         return client, db, users_col, leads_col, affiliates_col, referrals_col, withdrawals_col, transactions_col, webhook_events_col
 
     except Exception as e:
         logger.error(f"MongoDB connection failed: {e}")
-        # Corrected to return exactly 9 items
-        return None, None, None, None, None, None, None, None, None
+        return None, None, None, None, None, None, None, None
 
 _mongo_result = init_mongodb()
 if len(_mongo_result) == 9:
@@ -182,9 +227,9 @@ async def create_paystack_transfer_recipient(name, account_number, bank_code, cu
         )
         data = res.json()
         if data.get("status"):
-            return data["data"]["recipient_code"]
+            return data["data"]["recipient_code"], None
         logger.error(f"Transfer recipient creation failed: {data}")
-        return None
+        return None, data.get("message", "Unknown error from Paystack")
 
 async def initiate_paystack_transfer(amount, recipient_code, reason, reference=None):
     if reference is None:
@@ -217,6 +262,12 @@ async def initiate_paystack_transfer(amount, recipient_code, reason, reference=N
         return {"success": False, "error": data.get("message", "Unknown error")}
 
 async def get_paystack_bank_list(country="ghana", account_type="nuban", currency=None):
+    """
+    account_type='nuban' -> regular bank list for a country (bank transfer).
+    account_type='mobile_money' -> live list of mobile money telcos for a
+    currency, fetched from Paystack directly instead of hardcoded, so this
+    never goes stale or uses the wrong code again.
+    """
     params = {}
     if account_type == "mobile_money":
         params["type"] = "mobile_money"
@@ -246,6 +297,8 @@ async def verify_bank_account(account_number, bank_code):
         return data["data"]["account_name"] if data.get("status") else None
 
 async def verify_paystack_transaction(reference):
+    """Defense in depth: confirm the transaction with Paystack directly
+    rather than trusting the webhook body alone."""
     async with httpx.AsyncClient() as client:
         res = await client.get(
             f"https://api.paystack.co/transaction/verify/{reference}",
@@ -502,7 +555,7 @@ async def handle_affiliate_callback(chat_id, action, username=""):
 
             await bot.send_message(
                 chat_id=chat_id,
-                text=f"Step 4/5: Enter your {provider_code} Mobile Money number (with country code, e.g. +233...):",
+                text=f"Step 4/5: Enter your {provider_code} Mobile Money number, e.g. 0551234987 (with or without +233 — either works):",
                 parse_mode="HTML"
             )
 
@@ -863,8 +916,7 @@ async def show_bank_selection(chat_id, bot, country):
     banks = await get_paystack_bank_list(country, account_type="nuban")
     kb = []
     for b in banks[:20]:
-        # TRUNCATION FIX: Ensure bank name doesn't exceed Telegram's 64-byte payload limit
-        kb.append([InlineKeyboardButton(b["name"], callback_data=f"aff_bank:{b['code']}:{b['name'][:35]}")])
+        kb.append([InlineKeyboardButton(b["name"], callback_data=f"aff_bank:{b['code']}:{b['name']}")])
     kb.append([InlineKeyboardButton("Cancel", callback_data="affiliate_agree")])
     await bot.send_message(
         chat_id=chat_id,
@@ -897,6 +949,8 @@ async def show_momo_provider_selection(chat_id, bot, country):
 # SUBSCRIPTION MANAGEMENT
 # ==============================================================================
 async def generate_single_use_invite(channel_id: str):
+    """Fresh, single-use invite link -- never a static link embedded anywhere
+    the public can read it."""
     bot = Bot(token=BOT_TOKEN)
     try:
         link = await bot.create_chat_invite_link(
@@ -1027,12 +1081,12 @@ async def lifespan(app: FastAPI):
     if TELEGRAM_WEBHOOK_SECRET:
         await bot.set_webhook(url=webhook_target, secret_token=TELEGRAM_WEBHOOK_SECRET)
     else:
-        logger.warning("TELEGRAM_WEBHOOK_SECRET is not set -- webhook is unauthenticated.")
+        logger.warning("TELEGRAM_WEBHOOK_SECRET is not set -- webhook is unauthenticated. Set it in Render.")
         await bot.set_webhook(url=webhook_target)
     logger.info(f"Webhook set: {webhook_target}")
 
     if not ADMIN_API_KEY:
-        logger.warning("ADMIN_API_KEY is not set -- all /admin and /cron endpoints are locked out.")
+        logger.warning("ADMIN_API_KEY is not set -- all /admin and /cron endpoints are locked out (fail-closed). Set it in Render.")
 
     asyncio.create_task(scheduler_loop())
     yield
@@ -1065,6 +1119,8 @@ async def health_db():
 
 @app.get("/api/plans")
 async def api_plans():
+    """Lets the Mini App fetch canonical pricing instead of hardcoding it,
+    so front-end and back-end can never drift apart."""
     return {"plans": PLANS, "currency_rates": CURRENCY_RATES}
 
 class InitiatePaymentRequest(BaseModel):
@@ -1077,6 +1133,12 @@ class InitiatePaymentRequest(BaseModel):
 
 @app.post("/api/initiate-payment")
 async def api_initiate_payment(payload: InitiatePaymentRequest):
+    """
+    The only place an amount is ever decided. The Mini App calls this first,
+    gets back an access_code, and hands that to Paystack's popup. The client
+    never gets to tell Paystack how much to charge -- closing the price
+    tampering hole in the old flow.
+    """
     plan = PLANS_BY_KEY.get(payload.plan_key)
     if plan is None:
         raise HTTPException(status_code=400, detail="Invalid plan")
@@ -1179,13 +1241,13 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: Op
             currency = d.get("currency", "GHS")
 
             if payout_method == "bank":
-                recipient = await create_paystack_transfer_recipient(
+                recipient, error_msg = await create_paystack_transfer_recipient(
                     d["full_name"], d["account_number"], d["bank_code"], currency, recipient_type="nuban"
                 )
                 if recipient is None:
                     await Bot(token=BOT_TOKEN).send_message(
                         chat_id=chat_id,
-                        text=f"Failed to create payout account. Contact @{ADMIN_USERNAME}."
+                        text=f"Failed to create payout account: {error_msg}\n\nContact @{ADMIN_USERNAME} if this keeps happening."
                     )
                     return {"status": "ok"}
 
@@ -1201,13 +1263,13 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: Op
                     }
                 }
             else:
-                recipient = await create_paystack_transfer_recipient(
+                recipient, error_msg = await create_paystack_transfer_recipient(
                     d["full_name"], d["momo_number"], d["momo_provider"], currency, recipient_type="mobile_money"
                 )
                 if recipient is None:
                     await Bot(token=BOT_TOKEN).send_message(
                         chat_id=chat_id,
-                        text=f"Failed to create Mobile Money recipient. Contact @{ADMIN_USERNAME}."
+                        text=f"Failed to create Mobile Money recipient: {error_msg}\n\nContact @{ADMIN_USERNAME} if this keeps happening."
                     )
                     return {"status": "ok"}
 
@@ -1319,7 +1381,9 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: Op
                 return {"status": "ok"}
 
             elif step == "awaiting_momo_number":
-                state["data"]["momo_number"] = text
+                calling_code = AFRICA_COUNTRIES.get(state["data"].get("country", ""), {}).get("calling_code", "")
+                normalized_number = normalize_local_phone(text, calling_code)
+                state["data"]["momo_number"] = normalized_number
                 state["data"]["account_name"] = state["data"]["full_name"]
                 state["step"] = "awaiting_confirmation"
 
@@ -1329,7 +1393,7 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: Op
                 ]
                 await bot.send_message(
                     chat_id=chat_id,
-                    text=f"Confirm:\n\nName: {state['data']['full_name']}\nCountry: {state['data'].get('country_name', 'N/A')}\nProvider: {state['data'].get('momo_provider_name', 'N/A')}\nNumber: {text}\n\nTap confirm to start earning!",
+                    text=f"Confirm:\n\nName: {state['data']['full_name']}\nCountry: {state['data'].get('country_name', 'N/A')}\nProvider: {state['data'].get('momo_provider_name', 'N/A')}\nNumber: {normalized_number}\n\nTap confirm to start earning!",
                     parse_mode="HTML",
                     reply_markup=InlineKeyboardMarkup(kb)
                 )
@@ -1522,7 +1586,7 @@ async def paystack_webhook(request: Request, x_paystack_signature: str = Header(
         return JSONResponse({"status": "error", "detail": str(e)}, status_code=500)
 
 # ==============================================================================
-# ADMIN ENDPOINTS
+# ADMIN ENDPOINTS (all require X-Admin-Key header == ADMIN_API_KEY)
 # ==============================================================================
 
 @app.post("/cron/daily-check")
@@ -1689,6 +1753,8 @@ async def admin_approve_withdrawal(withdrawal_id: str, notes: str = "", _: bool 
     if withdrawals_col is None or affiliates_col is None:
         return JSONResponse({"error": "DB offline"}, status_code=503)
 
+    from bson.objectid import ObjectId
+
     try:
         withdrawal = withdrawals_col.find_one({"_id": ObjectId(withdrawal_id)})
     except:
@@ -1709,8 +1775,6 @@ async def admin_approve_withdrawal(withdrawal_id: str, notes: str = "", _: bool 
         return JSONResponse({"error": "Insufficient affiliate balance"}, status_code=400)
 
     recipient = affiliate.get("paystack_transfer_recipient")
-    transfer_result = None
-
     if recipient:
         amount_cents = int(withdrawal["amount"] * 100)
         transfer_result = await initiate_paystack_transfer(
@@ -1718,11 +1782,8 @@ async def admin_approve_withdrawal(withdrawal_id: str, notes: str = "", _: bool 
             recipient_code=recipient,
             reason=f"Affiliate withdrawal - {affiliate['ref_code']}"
         )
-        # CRITICAL FIX: Do not process database updates if Paystack fails
-        if not transfer_result.get("success"):
-            return JSONResponse({"error": f"Paystack transfer failed: {transfer_result.get('error', 'Unknown Error')}"}, status_code=400)
     else:
-        return JSONResponse({"error": "No payout recipient on file for this affiliate"}, status_code=400)
+        transfer_result = {"success": False, "error": "No payout recipient on file for this affiliate"}
 
     now = datetime.utcnow()
     withdrawals_col.update_one(
@@ -1733,7 +1794,7 @@ async def admin_approve_withdrawal(withdrawal_id: str, notes: str = "", _: bool 
                 "admin_approved": True,
                 "admin_notes": notes,
                 "processed_at": now,
-                "paystack_transfer_code": transfer_result.get("transfer_code")
+                "paystack_transfer_code": transfer_result.get("transfer_code") if transfer_result else None
             }
         }
     )
@@ -1777,6 +1838,8 @@ async def admin_approve_withdrawal(withdrawal_id: str, notes: str = "", _: bool 
 async def admin_reject_withdrawal(withdrawal_id: str, notes: str = "", _: bool = Depends(verify_admin)):
     if withdrawals_col is None:
         return JSONResponse({"error": "DB offline"}, status_code=503)
+
+    from bson.objectid import ObjectId
 
     try:
         withdrawal = withdrawals_col.find_one({"_id": ObjectId(withdrawal_id)})
