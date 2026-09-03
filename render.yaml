@@ -1,11 +1,9 @@
 services:
   - type: web
-    name: telegram-paystack-bot
+    name: jay-trading-hub-bot
     runtime: python
     plan: free
-
     buildCommand: pip install -r requirements.txt
-
     startCommand: uvicorn server:app --host 0.0.0.0 --port $PORT
 
     envVars:
@@ -51,8 +49,11 @@ services:
       - key: PAYMENT_CURRENCIES
         value: "GHS"
 
-      - key: AFFILIATE_FIRST_SALE_RATE
-        value: "0.50"
+      - key: BOT_USERNAME
+        value: "JayEmpire_bot"
 
-      - key: AFFILIATE_RENEWAL_RATE
-        value: "0.35"
+      - key: MIN_WITHDRAWAL_GHS
+        value: "50"
+
+      - key: WITHDRAWAL_COOLDOWN_DAYS
+        value: "7"
