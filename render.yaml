@@ -3,15 +3,15 @@ services:
     name: telegram-paystack-bot
     runtime: python
     plan: free
+
     buildCommand: pip install -r requirements.txt
+
     startCommand: uvicorn server:app --host 0.0.0.0 --port $PORT
 
     envVars:
       - key: PYTHONUNBUFFERED
         value: "1"
 
-      # Pins the build to Python 3.11.9 so Render can use
-      # prebuilt wheels for the project's dependencies.
       - key: PYTHON_VERSION
         value: "3.11.9"
 
@@ -39,14 +39,20 @@ services:
       - key: ADMIN_TELEGRAM_ID
         sync: false
 
-      # Required for protected admin API endpoints
       - key: ADMIN_API_KEY
         sync: false
 
-      # Used to authenticate Telegram webhook requests
       - key: TELEGRAM_WEBHOOK_SECRET
         sync: false
 
-      # Paystack account country
       - key: PAYSTACK_ACCOUNT_COUNTRY
         value: "ghana"
+
+      - key: PAYMENT_CURRENCIES
+        value: "GHS"
+
+      - key: AFFILIATE_FIRST_SALE_RATE
+        value: "0.50"
+
+      - key: AFFILIATE_RENEWAL_RATE
+        value: "0.35"
