@@ -403,7 +403,19 @@ async def start_cmd(update: Update, context):
             candidate = payload[4:].strip().upper()
             ref_code = candidate if re.fullmatch(r"JAY[A-Z0-9]{7}", candidate) else None
             if ref_code:
-                user_states[chat_id] = {"referred_by": ref_code}
+                # Persist referral attribution in MongoDB; do not rely on Render memory.
+                if leads_col is not None:
+                    leads_col.update_one(
+                        {"telegram_id": chat_id},
+                        {"$set": {"referred_by": ref_code, "referral_locked_at": datetime.utcnow()}},
+                        upsert=True
+                    )
+                if customers_col is not None:
+                    customers_col.update_one(
+                        {"telegram_id": chat_id, "$or": [{"referred_by": {"$exists": False}}, {"referred_by": None}, {"referred_by": ""}]},
+                        {"$set": {"referred_by": ref_code, "referral_locked_at": datetime.utcnow()}},
+                        upsert=True
+                    )
             logger.info(f"Referral detected: {ref_code} for user {chat_id}")
 
     if leads_col is not None:
@@ -432,9 +444,9 @@ async def start_cmd(update: Update, context):
 
     kb = [[InlineKeyboardButton("📈 Subscribe", web_app=WebAppInfo(url=MINI_APP_URL))]]
 
-    if is_affiliate is None:
+    if is_affiliate is None and not ref_code:
         kb.append([InlineKeyboardButton("🤝 Become an Affiliate", callback_data="affiliate_start")])
-    else:
+    elif is_affiliate is not None:
         kb.append([InlineKeyboardButton("📊 My Affiliate Dashboard", callback_data="affiliate_dashboard")])
         active_refs = 0
         if referrals_col is not None:
@@ -449,8 +461,8 @@ async def start_cmd(update: Update, context):
         "👑 <b>JAY EMPIRE VIP TERMINAL</b>\n"
         "<i>Success Is Our Aim</i>\n\n"
         "📈 <b>Subscribe</b> — get institutional-grade Gold &amp; FX signals\n"
-        "🤝 <b>Become an Affiliate</b> — earn commission sharing your link\n\n"
-        "Choose an option below to get started:"
+        + ("🤝 <b>Become an Affiliate</b> — earn commission sharing your link\n\n" if not ref_code and is_affiliate is None else "")
+        + "Choose an option below to get started:"
     )
     if ref_code:
         welcome_text += f"\n\n🔗 <i>Referred by:</i> <code>{ref_code}</code>"
@@ -490,6 +502,70 @@ telegram_app.add_handler(CallbackQueryHandler(callback_handler))
 # ==============================================================================
 # AFFILIATE CALLBACK HANDLERS
 # ==============================================================================
+
+async def show_country_selection(chat_id, bot, method):
+    """Show payout country. Current Paystack payout account is Ghana, so Ghana is the only automatic option."""
+    if PAYSTACK_ACCOUNT_COUNTRY not in AFRICA_COUNTRIES:
+        await bot.send_message(chat_id=chat_id, text="⚠️ Payout country is not configured correctly. Please contact the administrator.")
+        return
+    country = AFRICA_COUNTRIES[PAYSTACK_ACCOUNT_COUNTRY]
+    kb = [[InlineKeyboardButton(f"{country['flag']} {country['name']}", callback_data=f"country:{PAYSTACK_ACCOUNT_COUNTRY}:{method}")],
+          [InlineKeyboardButton("🔙 Back", callback_data="affiliate_start")]]
+    await bot.send_message(chat_id=chat_id, text=f"Step 3/5: Select your payout country for {method.title()}:", reply_markup=InlineKeyboardMarkup(kb))
+
+async def show_bank_selection(chat_id, bot, country_key):
+    """Fetch Ghana bank beneficiaries from Paystack and present selectable buttons."""
+    state = user_states.get(chat_id)
+    if not state:
+        await bot.send_message(chat_id=chat_id, text="Your affiliate setup session expired. Please tap Become an Affiliate and start again.")
+        return
+    currency = AFRICA_COUNTRIES.get(country_key, {}).get("currency", "GHS")
+    try:
+        banks = await get_paystack_bank_list(country_key, account_type="ghipss", currency=currency)
+    except Exception as e:
+        logger.exception("Failed to load bank list")
+        await bot.send_message(chat_id=chat_id, text="⚠️ I couldn't load the bank list right now. Please try again in a moment.")
+        return
+    banks = [b for b in banks if b.get("active", True) and not b.get("is_deleted", False)]
+    if not banks:
+        await bot.send_message(chat_id=chat_id, text="⚠️ No supported banks are available right now. Please try Mobile Money or contact the administrator.")
+        return
+    # Store the current list server-side so callback_data only contains a short bank code.
+    state["data"]["available_banks"] = {str(b.get("code")): b.get("name", str(b.get("code"))) for b in banks if b.get("code")}
+    rows = []
+    for b in banks[:80]:
+        code = str(b.get("code", ""))
+        name = str(b.get("name", code))[:48]
+        rows.append([InlineKeyboardButton(name, callback_data=f"aff_bank:{code}")])
+    rows.append([InlineKeyboardButton("🔙 Back", callback_data="payout_method_bank")])
+    await bot.send_message(chat_id=chat_id, text="Step 4/5: Select your bank:", reply_markup=InlineKeyboardMarkup(rows))
+
+async def show_momo_provider_selection(chat_id, bot, country_key):
+    """Fetch current mobile-money providers from Paystack."""
+    state = user_states.get(chat_id)
+    if not state:
+        await bot.send_message(chat_id=chat_id, text="Your affiliate setup session expired. Please start the affiliate setup again.")
+        return
+    currency = AFRICA_COUNTRIES.get(country_key, {}).get("currency", "GHS")
+    try:
+        providers = await get_paystack_bank_list(country_key, account_type="mobile_money", currency=currency)
+    except Exception:
+        logger.exception("Failed to load MoMo provider list")
+        await bot.send_message(chat_id=chat_id, text="⚠️ I couldn't load Mobile Money providers right now. Please try again.")
+        return
+    providers = [p for p in providers if p.get("active", True) and not p.get("is_deleted", False)]
+    if not providers:
+        await bot.send_message(chat_id=chat_id, text="⚠️ No Mobile Money providers are available right now.")
+        return
+    state["data"]["available_momo_providers"] = {str(p.get("code", "")).lower(): p.get("name", p.get("code", "")) for p in providers if p.get("code")}
+    rows = []
+    for p in providers:
+        code = str(p.get("code", "")).lower()
+        name = str(p.get("name", code))
+        rows.append([InlineKeyboardButton(f"📱 {name}", callback_data=f"momo_provider:{code}")])
+    rows.append([InlineKeyboardButton("🔙 Back", callback_data="payout_method_momo")])
+    await bot.send_message(chat_id=chat_id, text="Step 4/5: Select your Mobile Money provider:", reply_markup=InlineKeyboardMarkup(rows))
+
 async def handle_affiliate_callback(chat_id, action, username=""):
     bot = Bot(token=BOT_TOKEN)
 
@@ -615,10 +691,14 @@ async def handle_affiliate_callback(chat_id, action, username=""):
         parts = action.split(":", 1)
         if len(parts) == 2:
             _, provider_code = parts
-            if chat_id in user_states:
-                user_states[chat_id]["data"]["momo_provider"] = provider_code
-                user_states[chat_id]["data"]["momo_provider_name"] = provider_code
-                user_states[chat_id]["step"] = "awaiting_momo_number"
+            state = user_states.get(chat_id)
+            if not state:
+                await bot.send_message(chat_id=chat_id, text="Your affiliate setup session expired. Please start again.")
+                return
+            provider_name = state.get("data", {}).get("available_momo_providers", {}).get(provider_code.lower(), provider_code.upper())
+            state["data"]["momo_provider"] = provider_code.upper()
+            state["data"]["momo_provider_name"] = provider_name
+            state["step"] = "awaiting_momo_number"
 
             await bot.send_message(
                 chat_id=chat_id,
@@ -1272,22 +1352,29 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: Op
             pass
 
         if action.startswith("aff_bank:"):
-            parts = action.split(":", 2)
-            if len(parts) == 3:
-                _, bank_code, bank_name = parts
-                if chat_id in user_states:
-                    user_states[chat_id]["data"]["bank_code"] = bank_code
-                    user_states[chat_id]["data"]["bank_name"] = bank_name
-                    user_states[chat_id]["step"] = "awaiting_account_number"
-                await Bot(token=BOT_TOKEN).send_message(
-                    chat_id=chat_id,
-                    text=f"Step 4/5: Enter your Account Number for {bank_name}:",
-                    parse_mode="HTML"
-                )
+            bank_code = action.split(":", 1)[1].strip()
+            state = user_states.get(chat_id)
+            if not state:
+                await Bot(token=BOT_TOKEN).send_message(chat_id=chat_id, text="Your affiliate setup session expired. Please start again.")
+                return {"status": "ok"}
+            bank_name = state.get("data", {}).get("available_banks", {}).get(bank_code)
+            if not bank_name:
+                await Bot(token=BOT_TOKEN).send_message(chat_id=chat_id, text="That bank selection has expired. Please select your bank again.")
+                await show_bank_selection(chat_id, Bot(token=BOT_TOKEN), state["data"].get("country", PAYSTACK_ACCOUNT_COUNTRY))
+                return {"status": "ok"}
+            state["data"]["bank_code"] = bank_code
+            state["data"]["bank_name"] = bank_name
+            state["step"] = "awaiting_account_number"
+            await Bot(token=BOT_TOKEN).send_message(chat_id=chat_id, text=f"Step 4/5: Enter your Account Number for {html.escape(str(bank_name))}:", parse_mode="HTML")
             return {"status": "ok"}
 
         if action == "affiliate_confirm":
             if chat_id not in user_states:
+                return {"status": "ok"}
+            existing_affiliate = affiliates_col.find_one({"telegram_id": chat_id, "is_active": True}) if affiliates_col is not None else None
+            if existing_affiliate:
+                await Bot(token=BOT_TOKEN).send_message(chat_id=chat_id, text=f"You are already an affiliate. Your referral link is:\nhttps://t.me/{BOT_USERNAME}?start=ref_{existing_affiliate['ref_code']}")
+                del user_states[chat_id]
                 return {"status": "ok"}
             state = user_states[chat_id]
             d = state["data"]
