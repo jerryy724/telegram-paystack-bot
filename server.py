@@ -449,12 +449,26 @@ async def notify_milestone(update, affiliate, count):
 
 async def callback_handler(update: Update, context):
     query = update.callback_query
-    await query.answer()
-    chat_id = query.message.chat.id
-    action = query.data
-    username = query.from_user.username or ""
-
-    await handle_affiliate_callback(chat_id, action, username)
+    if not query:
+        return
+    try:
+        await query.answer()
+    except Exception:
+        pass
+    chat_id = query.from_user.id if query.from_user else query.message.chat.id
+    action = query.data or ""
+    username = query.from_user.username or "" if query.from_user else ""
+    try:
+        await handle_affiliate_callback(chat_id, action, username)
+    except Exception as e:
+        logger.exception("Callback handling failed: action=%s chat_id=%s", action, chat_id)
+        try:
+            await Bot(token=BOT_TOKEN).send_message(
+                chat_id=chat_id,
+                text="⚠️ Something went wrong while processing that button. Please try again."
+            )
+        except Exception:
+            pass
 
 telegram_app.add_handler(CommandHandler("start", start_cmd))
 telegram_app.add_handler(CallbackQueryHandler(callback_handler))
@@ -490,6 +504,128 @@ async def show_affiliate_confirmation(chat_id, bot):
 
 async def handle_affiliate_callback(chat_id, action, username=""):
     bot = Bot(token=BOT_TOKEN)
+
+    if action == "affiliate_confirm":
+        logger.info("Affiliate confirm received via PTB handler for Telegram ID %s", chat_id)
+        if affiliates_col is None or onboarding_col is None:
+            await bot.send_message(chat_id=chat_id, text="⚠️ Affiliate service is temporarily unavailable because the database is not connected. Please try again.")
+            return
+
+        state = get_affiliate_onboarding(chat_id)
+        if not state or state.get("step") != "awaiting_confirmation":
+            await bot.send_message(chat_id=chat_id, text="⚠️ Your affiliate setup session is not active. Tap Become an Affiliate and start again.")
+            return
+
+        existing = affiliates_col.find_one({"telegram_id": chat_id})
+        if existing and existing.get("is_active", True):
+            ref_link = f"https://t.me/{BOT_USERNAME}?start=ref_{existing['ref_code']}"
+            clear_affiliate_onboarding(chat_id)
+            await bot.send_message(chat_id=chat_id, text=f"You already have an affiliate account.\n\nYour referral link:\n{ref_link}")
+            return
+
+        d = state.get("data") or {}
+        full_name = str(d.get("full_name", "")).strip()
+        momo_number = str(d.get("payout_details_input", "")).strip()
+        if len(full_name) < 2 or not re.fullmatch(r"0[0-9]{9}", momo_number):
+            await bot.send_message(chat_id=chat_id, text="⚠️ The saved details are invalid. Please start again and use: Full Name - Mobile Money Number")
+            return
+
+        # Generate a collision-safe referral code. The code is created locally; Paystack is not involved.
+        ref_code = None
+        for _ in range(10):
+            candidate = generate_ref_code()
+            if affiliates_col.find_one({"ref_code": candidate}) is None:
+                ref_code = candidate
+                break
+        if not ref_code:
+            await bot.send_message(chat_id=chat_id, text="⚠️ Could not generate a unique affiliate link. Please try again.")
+            return
+
+        aff_doc = {
+            "telegram_id": int(chat_id),
+            "username": username or "",
+            "full_name": full_name,
+            "ref_code": ref_code,
+            "payout_method": "momo",
+            "country": "ghana",
+            "country_name": "Ghana",
+            "commission_rates": {"first_sale": COMMISSION_FIRST_SALE, "renewal": COMMISSION_RENEWAL},
+            "total_earnings": 0,
+            "total_withdrawn": 0,
+            "total_referrals": 0,
+            "wallet_earned_minor": 0,
+            "wallet_withdrawn_minor": 0,
+            "wallet_reserved_minor": 0,
+            "is_active": True,
+            "milestone_notified": False,
+            "manual_payout_details": momo_number,
+            "created_at": datetime.utcnow(),
+        }
+
+        try:
+            result = affiliates_col.insert_one(aff_doc)
+            created = affiliates_col.find_one({"_id": result.inserted_id})
+            if not created:
+                raise RuntimeError("Affiliate record was not found after insertion")
+        except DuplicateKeyError:
+            existing = affiliates_col.find_one({"telegram_id": chat_id})
+            if existing:
+                ref_link = f"https://t.me/{BOT_USERNAME}?start=ref_{existing['ref_code']}"
+                clear_affiliate_onboarding(chat_id)
+                await bot.send_message(chat_id=chat_id, text=f"Your affiliate account already exists.\n\nYour referral link:\n{ref_link}")
+                return
+            await bot.send_message(chat_id=chat_id, text="⚠️ The affiliate account could not be created because of a database conflict. Please try again.")
+            return
+        except Exception as e:
+            logger.exception("Affiliate creation failed for %s", chat_id)
+            await bot.send_message(chat_id=chat_id, text=f"⚠️ Affiliate account creation failed: {type(e).__name__}. Please try again.")
+            if ADMIN_TELEGRAM_ID:
+                try:
+                    await bot.send_message(chat_id=ADMIN_TELEGRAM_ID, text=f"⚠️ Affiliate creation error\nTelegram ID: {chat_id}\nError: {type(e).__name__}: {e}")
+                except Exception:
+                    pass
+            return
+
+        ref_link = f"https://t.me/{BOT_USERNAME}?start=ref_{ref_code}"
+        clear_affiliate_onboarding(chat_id)
+
+        try:
+            await bot.send_message(
+                chat_id=ADMIN_TELEGRAM_ID,
+                text=(
+                    f"🆕 <b>New Affiliate Created</b>\n\n"
+                    f"Name: {html.escape(full_name)}\n"
+                    f"Username: @{html.escape(username or 'N/A')}\n"
+                    f"Telegram ID: <code>{chat_id}</code>\n"
+                    f"Referral Code: <code>{ref_code}</code>\n"
+                    f"Referral Link: {html.escape(ref_link)}\n"
+                    f"Payout Method: Mobile Money\n"
+                    f"MoMo Number: <code>{html.escape(momo_number)}</code>"
+                ),
+                parse_mode="HTML"
+            )
+        except Exception as e:
+            logger.error("Failed to notify admin about new affiliate: %s", e)
+
+        await bot.send_message(
+            chat_id=chat_id,
+            text=(
+                "🎉 <b>Affiliate Account Created Successfully!</b>\n\n"
+                f"Name: {html.escape(full_name)}\n"
+                f"Mobile Money: <code>{html.escape(momo_number)}</code>\n\n"
+                f"<b>Your unique referral link:</b>\n{html.escape(ref_link)}\n\n"
+                f"Commission: {COMMISSION_FIRST_SALE}% first qualifying sale | {COMMISSION_RENEWAL}% renewal\n"
+                f"Milestone: {REFERRAL_MILESTONE} active referrals = Lifetime VIP reward\n\n"
+                "Share this link with customers. When they start the bot through your link, their referral attribution is locked to you before checkout. "
+                "Paystack is only used later for the customer's normal subscription payment; it is not involved in affiliate creation or payouts."
+            ),
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("📈 Open VIP Subscription", web_app=WebAppInfo(url=MINI_APP_URL))],
+                [InlineKeyboardButton("📊 My Affiliate Dashboard", callback_data="affiliate_dashboard")]
+            ])
+        )
+        return
 
     # Admin payout buttons are only actionable from the configured admin chat.
     if action.startswith("admin_withdraw_"):
@@ -1096,8 +1232,12 @@ async def api_initiate_payment(payload: InitiatePaymentRequest):
         "status": "pending",
         "created_at": {"$gte": recent_cutoff}
     })
-    if recent:
-        return {"access_code": recent["access_code"], "reference": recent["reference"]}
+    if recent and recent.get("access_code"):
+        return {
+            "access_code": recent["access_code"],
+            "authorization_url": recent.get("authorization_url"),
+            "reference": recent["reference"]
+        }
 
     rate = CURRENCY_RATES[payload.currency]
     amount_minor = int(round(plan["usd"] * rate * 100))
@@ -1134,6 +1274,7 @@ async def api_initiate_payment(payload: InitiatePaymentRequest):
         "created_at": datetime.utcnow(),
         "fulfilled_at": None,
         "access_code": None,
+        "authorization_url": None,
     }
 
     # Persist the internal payment intent before calling Paystack. This prevents a fast
@@ -1174,12 +1315,17 @@ async def api_initiate_payment(payload: InitiatePaymentRequest):
         raise HTTPException(status_code=502, detail="Could not start payment. Please try again.")
 
     access_code = data["data"]["access_code"]
+    authorization_url = data["data"].get("authorization_url")
     payment_intents_col.update_one(
         {"reference": reference},
-        {"$set": {"access_code": access_code, "paystack_initialized_at": datetime.utcnow()}}
+        {"$set": {
+            "access_code": access_code,
+            "authorization_url": authorization_url,
+            "paystack_initialized_at": datetime.utcnow()
+        }}
     )
 
-    return {"access_code": access_code, "reference": reference}
+    return {"access_code": access_code, "authorization_url": authorization_url, "reference": reference}
 
 
 @app.get("/api/payment-status")
@@ -1210,127 +1356,12 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: Op
     data = await request.json()
 
     if "callback_query" in data:
-        query = data["callback_query"]
-        chat_id = query["message"]["chat"]["id"]
-        action = query["data"]
-        username = query["from"].get("username", "")
-
         try:
-            await Bot(token=BOT_TOKEN).answer_callback_query(callback_query_id=query["id"])
-        except Exception:
-            pass
-
-        if action == "affiliate_confirm":
-            logger.info("Affiliate confirm clicked for Telegram ID %s", chat_id)
-            state = get_affiliate_onboarding(chat_id)
-            if not state or state.get("step") != "awaiting_confirmation":
-                await Bot(token=BOT_TOKEN).send_message(
-                    chat_id=chat_id,
-                    text="⚠️ This affiliate setup session is no longer active. Tap Become an Affiliate and start again."
-                )
-                return {"status": "ok"}
-            existing_affiliate = affiliates_col.find_one({"telegram_id": chat_id, "is_active": True}) if affiliates_col is not None else None
-            if existing_affiliate:
-                await Bot(token=BOT_TOKEN).send_message(chat_id=chat_id, text=f"You are already an affiliate. Your referral link is:\nhttps://t.me/{BOT_USERNAME}?start=ref_{existing_affiliate['ref_code']}")
-                clear_affiliate_onboarding(chat_id)
-                return {"status": "ok"}
-            d = state.get("data", {})
-            full_name = str(d.get("full_name", "")).strip()
-            momo_number = str(d.get("payout_details_input", "")).strip()
-            if len(full_name) < 2 or not re.fullmatch(r"0[0-9]{9}", momo_number):
-                await Bot(token=BOT_TOKEN).send_message(
-                    chat_id=chat_id,
-                    text="⚠️ Your affiliate details are incomplete. Tap Become an Affiliate and enter: Full Name - Mobile Money Number"
-                )
-                return {"status": "ok"}
-            payout_method = "momo"
-            payout_details = {"manual_payout_details": momo_number}
-
-            ref_code = generate_ref_code()
-            aff_doc = {
-                "telegram_id": chat_id,
-                "username": username,
-                "full_name": full_name,
-                "ref_code": ref_code,
-                "payout_method": payout_method,
-                "country": d.get("country", ""),
-                "country_name": d.get("country_name", ""),
-                "commission_rates": {"first_sale": COMMISSION_FIRST_SALE, "renewal": COMMISSION_RENEWAL},
-                "total_earnings": 0,
-                "total_withdrawn": 0,
-                "total_referrals": 0,
-                "wallet_earned_minor": 0,
-                "wallet_withdrawn_minor": 0,
-                "wallet_reserved_minor": 0,
-                "is_active": True,
-                "milestone_notified": False,
-                "created_at": datetime.utcnow(),
-                **payout_details
-            }
-
-            if affiliates_col is None:
-                await bot.send_message(chat_id=chat_id, text="⚠️ Affiliate service is temporarily unavailable. Please try again later.")
-                return {"status": "error"}
-
-            try:
-                affiliates_col.insert_one(aff_doc)
-            except DuplicateKeyError:
-                existing = affiliates_col.find_one({"telegram_id": chat_id, "is_active": True})
-                if existing:
-                    await bot.send_message(
-                        chat_id=chat_id,
-                        text=f"You already have an affiliate account.\n\nYour referral link:\nhttps://t.me/{BOT_USERNAME}?start=ref_{existing['ref_code']}"
-                    )
-                    clear_affiliate_onboarding(chat_id)
-                    return {"status": "ok"}
-                await bot.send_message(chat_id=chat_id, text="⚠️ Could not create the affiliate account. Please try again.")
-                return {"status": "error"}
-            except Exception as e:
-                logger.exception("Affiliate creation failed for %s", chat_id)
-                await bot.send_message(chat_id=chat_id, text="⚠️ We could not create your affiliate account right now. Please try again.")
-                try:
-                    await bot.send_message(chat_id=ADMIN_TELEGRAM_ID, text=f"⚠️ Affiliate creation error for Telegram ID {chat_id}: {type(e).__name__}: {e}")
-                except Exception:
-                    pass
-                return {"status": "error"}
-
-            ref_link = f"https://t.me/{BOT_USERNAME}?start=ref_{ref_code}"
-            try:
-                await bot.send_message(
-                    chat_id=ADMIN_TELEGRAM_ID,
-                    text=(
-                        f"🆕 <b>New Affiliate Created</b>\n\n"
-                        f"Name: {html.escape(str(d.get('full_name','N/A')))}\n"
-                        f"Username: @{html.escape(str(username or 'N/A'))}\n"
-                        f"Telegram ID: <code>{chat_id}</code>\n"
-                        f"Referral Code: <code>{ref_code}</code>\n"
-                        f"Referral Link: {html.escape(ref_link)}\n"
-                        f"Payout Method: {html.escape(payout_method.upper())}\n"
-                        f"Payout Details: {html.escape(str(d.get('payout_details_input','N/A')))}"
-                    ),
-                    parse_mode="HTML"
-                )
-            except Exception as e:
-                logger.error("Failed to notify admin about new affiliate: %s", e)
-            payout_text = "Bank Transfer" if payout_method == "bank" else "Mobile Money"
-            await Bot(token=BOT_TOKEN).send_message(
-                chat_id=chat_id,
-                text=(
-                    f"🎉 Welcome to the Affiliate Program!\n\n"
-                    f"Your Link:\n{ref_link}\n\n"
-                    f"Commissions: {COMMISSION_FIRST_SALE}% first | {COMMISSION_RENEWAL}% renewal\n"
-                    f"Bonus: {REFERRAL_MILESTONE}+ refs = Lifetime VIP\n"
-                    f"Payout Method: {payout_text} (manual processing)\n"
-                    f"Minimum withdrawal: GHS {MIN_WITHDRAWAL_MINOR/100:,.2f}\n"
-                    f"Payouts are manually reviewed and sent by JAY Trading Hub.\n\n"
-                    f"Start sharing your referral link and build your earnings."
-                ),
-                parse_mode="HTML"
-            )
-            clear_affiliate_onboarding(chat_id)
-            return {"status": "ok"}
-
-        await handle_affiliate_callback(chat_id, action, username)
+            update = Update.de_json(data, telegram_app.bot)
+            await telegram_app.process_update(update)
+        except Exception as e:
+            logger.exception("Telegram callback webhook processing failed: %s", e)
+            # Return 200 so Telegram does not repeatedly redeliver a broken callback.
         return {"status": "ok"}
 
     if "message" in data and "text" in data["message"]:
