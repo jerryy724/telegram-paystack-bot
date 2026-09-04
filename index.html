@@ -1201,32 +1201,37 @@
         let paymentMonitorPromise = null;
         let paymentMonitorReference = null;
 
-        function savePendingPayment(reference) {
+        function savePendingPayment(reference, statusToken = null) {
             if (!reference) return;
             try {
+                const existing = JSON.parse(localStorage.getItem('jay_pending_payment') || 'null');
                 localStorage.setItem('jay_pending_payment', JSON.stringify({
                     reference: reference,
-                    telegram_id: tg.initDataUnsafe?.user?.id || null,
+                    status_token: statusToken || existing?.status_token || null,
+                    telegram_id: tg.initDataUnsafe?.user?.id || existing?.telegram_id || null,
                     saved_at: Date.now()
                 }));
             } catch (e) {}
         }
 
-        async function pollPayment(reference, initData) {
-            if (!reference || !initData) return false;
+        async function pollPayment(reference, initData, statusToken) {
+            if (!reference || (!initData && !statusToken)) return false;
 
-            savePendingPayment(reference);
+            savePendingPayment(reference, statusToken);
 
             for (let attempt = 0; attempt < 180; attempt++) {
-                // Check immediately, then every 2 seconds. This removes the old
-                // blind delay and makes the post-payment screen appear as soon as
-                // the webhook has fulfilled the payment.
                 if (attempt > 0) {
                     await new Promise(resolve => setTimeout(resolve, 2000));
                 }
                 try {
+                    const headers = {};
+                    if (statusToken) {
+                        headers['X-Payment-Status-Token'] = statusToken;
+                    } else if (initData) {
+                        headers['X-Telegram-Init-Data'] = initData;
+                    }
                     const res = await fetch(`${BACKEND_URL}/api/payment-status?reference=${encodeURIComponent(reference)}`, {
-                        headers: { 'X-Telegram-Init-Data': initData },
+                        headers,
                         cache: 'no-store'
                     });
                     if (!res.ok) continue;
@@ -1236,7 +1241,7 @@
                         showPaymentSuccess(data);
                         return true;
                     }
-                    if (data.status === 'access_pending') {
+                    if (data.status === 'access_pending' || data.status === 'processing' || data.status === 'pending') {
                         continue;
                     }
                     if (data.status === 'failed') {
@@ -1250,14 +1255,14 @@
             return false;
         }
 
-        function startPaymentMonitor(reference) {
-            if (!reference || !tg.initData) return null;
-            savePendingPayment(reference);
+        function startPaymentMonitor(reference, statusToken = null) {
+            if (!reference || (!tg.initData && !statusToken)) return null;
+            savePendingPayment(reference, statusToken);
             if (paymentMonitorPromise && paymentMonitorReference === reference) {
                 return paymentMonitorPromise;
             }
             paymentMonitorReference = reference;
-            paymentMonitorPromise = pollPayment(reference, tg.initData).finally(() => {
+            paymentMonitorPromise = pollPayment(reference, tg.initData, statusToken).finally(() => {
                 paymentMonitorPromise = null;
                 paymentMonitorReference = null;
             });
@@ -1265,35 +1270,35 @@
         }
 
         async function recoverPendingPayment() {
-            if (!tg.initData) return;
-
             const params = new URLSearchParams(window.location.search);
             let reference = params.get('reference') || params.get('trxref') || params.get('payment_ref');
+            let statusToken = params.get('payment_status_token');
 
-            if (reference) {
-                savePendingPayment(reference);
-            } else {
-                try {
-                    const saved = JSON.parse(localStorage.getItem('jay_pending_payment') || 'null');
-                    if (saved && saved.reference &&
-                        Date.now() - Number(saved.saved_at || 0) < 30 * 60 * 1000 &&
-                        (saved.telegram_id === null || saved.telegram_id === (tg.initDataUnsafe?.user?.id || null))) {
-                        reference = saved.reference;
-                    }
-                } catch (e) {}
-            }
+            try {
+                const saved = JSON.parse(localStorage.getItem('jay_pending_payment') || 'null');
+                if (!reference && saved && saved.reference &&
+                    Date.now() - Number(saved.saved_at || 0) < 30 * 60 * 1000 &&
+                    (saved.telegram_id === null || saved.telegram_id === undefined || saved.telegram_id === (tg.initDataUnsafe?.user?.id || null))) {
+                    reference = saved.reference;
+                }
+                if (!statusToken && saved?.status_token) {
+                    statusToken = saved.status_token;
+                }
+            } catch (e) {}
 
             if (!reference) return;
+            if (!statusToken && !tg.initData) return;
+
+            savePendingPayment(reference, statusToken);
 
             // A returned/reloaded Mini App must never restart at Terms & Conditions
-            // when there is a recent payment reference. Go straight to the success
-            // state and let the server decide when the access button is safe to show.
+            // when there is a recent payment reference.
             switchStep('success');
             document.getElementById('success-title').textContent = 'Confirming Payment…';
             document.getElementById('success-message').textContent = 'Your payment was completed. We are confirming your VIP access and preparing your private link.';
             document.getElementById('success-access-wrap').style.display = 'none';
 
-            const completed = await startPaymentMonitor(reference);
+            const completed = await startPaymentMonitor(reference, statusToken);
             if (!completed) {
                 document.getElementById('success-title').textContent = 'Payment Received';
                 document.getElementById('success-message').textContent = 'Your payment has been received. Your VIP access is still being prepared. Please keep this terminal open for a moment.';
@@ -1337,53 +1342,23 @@
                 const initData = await initRes.json().catch(() => ({}));
                 if (!initRes.ok) throw new Error(initData.detail || 'Could not start payment.');
 
-                savePendingPayment(initData.reference);
+                savePendingPayment(initData.reference, initData.status_token);
 
-                // IMPORTANT: keep the checkout inside Paystack Popup V2. The old
-                // authorization_url/window.location fallback could navigate the
-                // Telegram Mini App away from this page, destroy its in-memory state,
-                // and return the customer to the initial Terms screen.
                 if (!window.PaystackPop || typeof PaystackPop !== 'function') {
                     throw new Error('Paystack checkout could not be loaded. Please reopen the VIP Terminal and try again.');
                 }
 
-                const popup = new PaystackPop();
-                popup.resumeTransaction(initData.access_code, {
-                    onSuccess: function(transaction) {
-                        // Paystack's client callback only starts the post-payment UI;
-                        // the backend/webhook still decides when the access button can
-                        // be shown. This is deliberately not trusted as proof of payment.
-                        const reference = transaction?.reference || initData.reference;
-                        savePendingPayment(reference);
-                        switchStep('success');
-                        document.getElementById('success-title').textContent = 'Payment Approved';
-                        document.getElementById('success-message').textContent = 'Your payment was approved. We are confirming your VIP access and preparing your private link.';
-                        document.getElementById('success-access-wrap').style.display = 'none';
-                        startPaymentMonitor(reference);
-                    },
-                    onCancel: function() {
-                        // Do not clear the pending reference here: a payment can finish
-                        // in another browser/payment flow immediately before the popup
-                        // closes. Recovery will check the reference on the next open.
-                        payBtn.disabled = false;
-                        payBtn.textContent = originalLabel;
-                    },
-                    onError: function(error) {
-                        console.error('Paystack checkout error:', error);
-                        payBtn.disabled = false;
-                        payBtn.textContent = originalLabel;
-                        tg.showAlert ? tg.showAlert('Payment error: ' + (error?.message || 'Please try again.')) : alert('Payment error.');
-                    }
-                });
-
+                // Start verification BEFORE opening Paystack. Popup V2's
+                // resumeTransaction(accessCode) does not accept callback options;
+                // the secure status monitor is therefore the post-payment trigger.
+                startPaymentMonitor(initData.reference, initData.status_token);
                 payBtn.textContent = 'Waiting for payment...';
-                const completed = await startPaymentMonitor(initData.reference);
-                if (!completed) {
-                    switchStep('success');
-                    document.getElementById('success-title').textContent = 'Payment Received';
-                    document.getElementById('success-message').textContent = 'Your payment has been received. We are still preparing your VIP access link. Please keep this terminal open for a moment.';
-                    document.getElementById('success-access-wrap').style.display = 'none';
-                }
+
+                const popup = new PaystackPop();
+                popup.resumeTransaction(initData.access_code);
+
+                // No authorization_url/window.location fallback is used. Leaving the
+                // Mini App here was the cause of the old return-to-Terms behavior.
             } catch (err) {
                 tg.showAlert ? tg.showAlert(err.message || 'Payment error.') : alert(err.message || 'Payment error.');
             } finally {
