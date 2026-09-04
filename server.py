@@ -60,6 +60,7 @@ PAYSTACK_SECRET = os.getenv("PAYSTACK_SECRET_KEY", "")
 MONGO_URI = os.getenv("MONGO_URI", "").strip().strip('"').strip("'")
 MINI_APP_URL = os.getenv("MINI_APP_URL", "https://jerryy724.github.io/telegram-paystack-bot/")
 RENDER_URL = os.getenv("RENDER_EXTERNAL_URL", "https://telegram-paystack-bot-415x.onrender.com")
+MINI_APP_VERSION = "20260904-v9"
 
 GOLD_CHANNEL_ID = os.getenv("GOLD_CHANNEL_ID", "-1004329655598")
 FOREX_CHANNEL_ID = os.getenv("FOREX_CHANNEL_ID", "-1004451754852")
@@ -76,7 +77,11 @@ def mini_app_launch_url():
     """
     base = MINI_APP_URL.rstrip("?")
     separator = "&" if "?" in base else "?"
-    return f"{base}{separator}backend={quote(RENDER_URL.rstrip('/'), safe='')}"
+    return (
+        f"{base}{separator}"
+        f"backend={quote(RENDER_URL.rstrip('/'), safe='')}"
+        f"&v={quote(MINI_APP_VERSION, safe='')}"
+    )
 
 ADMIN_API_KEY = os.getenv("ADMIN_API_KEY", "")
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
@@ -129,6 +134,32 @@ def normalize_local_phone(raw: str, calling_code: str) -> str:
     elif not digits.startswith("0"):
         digits = "0" + digits
     return digits
+
+def telegram_display_name(user) -> str:
+    """Return the Telegram user's real display name for customer records/messages."""
+    if not user:
+        return ""
+    first = str(getattr(user, "first_name", "") or "").strip()
+    last = str(getattr(user, "last_name", "") or "").strip()
+    return " ".join(part for part in (first, last) if part).strip()
+
+def customer_display_name(customer: dict) -> str:
+    """Resolve a customer name without ever displaying a literal 'nil'/'N/A'."""
+    if not customer:
+        return "Unknown Telegram User"
+    full = str(customer.get("full_name") or "").strip()
+    if full:
+        return full
+    combined = " ".join(
+        part for part in (
+            str(customer.get("first_name") or "").strip(),
+            str(customer.get("last_name") or "").strip(),
+        ) if part
+    ).strip()
+    if combined:
+        return combined
+    username = str(customer.get("username") or "").strip().lstrip("@")
+    return f"@{username}" if username else "Unknown Telegram User"
 
 # ==============================================================================
 # MONGODB
@@ -416,6 +447,8 @@ async def start_cmd(update: Update, context):
                 leads_col.insert_one({
                     "telegram_id": chat_id,
                     "first_name": user.first_name or "",
+                    "last_name": user.last_name or "",
+                    "full_name": telegram_display_name(user),
                     "username": username,
                     "started_at": datetime.utcnow(),
                     "converted": False,
@@ -424,7 +457,13 @@ async def start_cmd(update: Update, context):
                     "referral_locked_at": datetime.utcnow() if ref_code else None,
                 })
             else:
-                update_fields = {"first_name": user.first_name or "", "username": username, "last_seen_at": datetime.utcnow()}
+                update_fields = {
+                    "first_name": user.first_name or "",
+                    "last_name": user.last_name or "",
+                    "full_name": telegram_display_name(user),
+                    "username": username,
+                    "last_seen_at": datetime.utcnow(),
+                }
                 if ref_code and not lead.get("referred_by"):
                     update_fields.update({"referred_by": ref_code, "referral_locked_at": datetime.utcnow()})
                 leads_col.update_one({"_id": lead["_id"]}, {"$set": update_fields})
@@ -438,6 +477,7 @@ async def start_cmd(update: Update, context):
                 "telegram_id": chat_id,
                 "first_name": user.first_name or "",
                 "last_name": user.last_name or "",
+                "full_name": telegram_display_name(user),
                 "username": username,
                 "last_seen_at": datetime.utcnow(),
             }
@@ -910,8 +950,10 @@ async def show_affiliate_dashboard(chat_id, bot):
         provider = m.get("provider_name") or "Mobile Money"
         payout_detail = f"📱 {provider} • {phone}"
 
+    affiliate_name = str(aff.get("full_name") or "").strip() or "Affiliate"
     dashboard = (
         "💎 <b>JAY EMPIRE AFFILIATE DASHBOARD</b>\n\n"
+        f"Name: <b>{html.escape(affiliate_name)}</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
         f"🔗 <b>Your Referral Link</b>\n\n<code>{html.escape(ref_link)}</code>\n\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
@@ -990,12 +1032,15 @@ async def show_affiliate_referrals(chat_id, bot):
     text = "👥 <b>Your Referrals</b>\n\n"
     for ref in refs:
         customer_id = ref.get("customer_telegram_id")
+        customer = customers_col.find_one({"telegram_id": customer_id}) if customers_col is not None else None
+        customer_name = customer_display_name(customer)
         active = bool(users_col and users_col.count_documents({"telegram_id": customer_id, "is_active": True}))
         lp = ref.get("last_payment", {})
         commission = int(lp.get("commission_paid_minor", 0))
         amount = int(lp.get("amount", 0))
-        text += f"User: <code>{customer_id}</code> {'🟢 Active' if active else '🔴 Inactive'}\n"
-        text += f"  Channel: {html.escape(str(ref.get('customer_channel','N/A')).upper())}\n"
+        text += f"Name: <b>{html.escape(customer_name)}</b>\n"
+        text += f"Telegram ID: <code>{customer_id}</code> {'🟢 Active' if active else '🔴 Inactive'}\n"
+        text += f"  Channel: {html.escape(str(ref.get('customer_channel','Unknown')).upper())}\n"
         if lp:
             text += f"  Last Pay: GHS {amount/100:,.2f} | Commission: GHS {commission/100:,.2f}\n"
         text += "\n"
@@ -1114,7 +1159,7 @@ async def process_withdrawal_confirmation(chat_id, amount_minor, bot):
         ]])
         await bot.send_message(chat_id=ADMIN_TELEGRAM_ID,
             text=(f"🚨 <b>New Affiliate Withdrawal</b>\n\n"
-                  f"Affiliate: {html.escape(str(aff.get('full_name','N/A')))} (@{html.escape(str(aff.get('username','N/A')))})\n"
+                  f"Affiliate: <b>{html.escape(str(aff.get('full_name') or aff.get('username') or f"Telegram {aff.get('telegram_id')}"))}</b> (@{html.escape(str(aff.get('username') or 'N/A'))})\n"
                   f"Code: <code>{html.escape(str(aff.get('ref_code','')))}</code>\n"
                   f"Amount: <b>GHS {amount_minor/100:,.2f}</b>\n"
                   f"Method: {html.escape(str(aff.get('payout_method','N/A')).upper())}\n{html.escape(payout_text)}\n\n<b>Action:</b> Send the money manually, then tap <b>MARK AS PAID</b>."),
@@ -1133,10 +1178,14 @@ async def show_payout_info(chat_id, bot):
         or aff.get("manual_payout_details")
         or "Not provided"
     )
+    provider = (aff.get("mobile_money_details") or {}).get("provider_name") or "Mobile Money"
+    affiliate_name = str(aff.get("full_name") or "").strip() or "Name not provided"
     text = (
         f"💳 <b>Payout Details</b>\n\n"
+        f"Name: <b>{html.escape(affiliate_name)}</b>\n"
         f"Method: {html.escape(method)}\n"
-        f"Details: {html.escape(str(details))}\n\n"
+        f"Provider: {html.escape(provider)}\n"
+        f"Number: <b>{html.escape(str(details))}</b>\n\n"
         "Withdrawals are processed within 48 hours upon request.\n\n"
         "Withdrawals placed on weekends will be processed on the next working day."
     )
@@ -1796,12 +1845,14 @@ async def paystack_webhook(request: Request, x_paystack_signature: str = Header(
                                     "affiliate_id": affiliate["_id"],
                                     "ref_code": ref_code,
                                     "customer_telegram_id": tg_id,
+                                    "customer_name": customer_display_name(customer_record),
                                     "customer_channel": channel_type,
                                     "plan_key": intent.get("plan_key", "unknown"),
                                     "created_at": now,
                                     "is_active": True
                                 },
                                 "$set": {
+                                    "customer_name": customer_display_name(customer_record),
                                     "last_payment": {
                                         "amount": amount,
                                         "currency": data.get("currency"),
@@ -1887,6 +1938,7 @@ async def paystack_webhook(request: Request, x_paystack_signature: str = Header(
                             "plan_key": intent.get("plan_key"),
                             "paid_at": now,
                         },
+                        "full_name": customer_display_name(customer_record),
                         "last_paid_at": now,
                         "last_reference": reference,
                         "last_channel": channel_type,
@@ -1907,6 +1959,7 @@ async def paystack_webhook(request: Request, x_paystack_signature: str = Header(
                         chat_id=ADMIN_TELEGRAM_ID,
                         text=(
                             "🆕 <b>New Referred Signup</b>\n\n"
+                            f"Customer Name: <b>{html.escape(customer_display_name(customer_record))}</b>\n"
                             f"Customer ID: <code>{tg_id}</code>\n"
                             f"Affiliate: <b>{html.escape(str((affiliate or {}).get('full_name','N/A')))}</b>\n"
                             f"Referral Code: <code>{html.escape(str(ref_code))}</code>\n"
@@ -2068,7 +2121,7 @@ async def admin_affiliates_detailed(_: bool = Depends(verify_admin)):
         aff_data = {
             "telegram_id": aff.get("telegram_id"),
             "username": aff.get("username"),
-            "full_name": aff.get("full_name"),
+            "full_name": str(aff.get("full_name") or "").strip() or str(aff.get("username") or "").strip() or f"Telegram {aff.get('telegram_id')}",
             "ref_code": aff.get("ref_code"),
             "country": aff.get("country_name"),
             "payout_method": aff.get("payout_method"),
