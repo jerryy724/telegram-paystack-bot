@@ -701,6 +701,12 @@
             margin-bottom: 12px;
         }
 
+        .modal-body hr {
+            border: 0;
+            border-top: 1px solid rgba(148, 163, 184, 0.25);
+            margin: 18px 0;
+        }
+
         .modal-body strong {
             color: var(--text-primary);
         }
@@ -877,7 +883,7 @@
                 <p class="card-desc" id="summary-desc">Review your subscription details</p>
 
                 <div class="affiliate-notice" id="affiliate-notice">
-                    <div class="affiliate-label">💰 Referral attribution is handled automatically by Telegram.</div>
+                    <div class="affiliate-label">🔒 Referral attribution is handled automatically and verified securely.</div>
                     <div class="affiliate-code" id="affiliate-code-display"></div>
                 </div>
 
@@ -978,10 +984,13 @@
         <div class="modal-box">
             <h3 class="modal-title">Terms &amp; Conditions</h3>
             <div class="modal-body">
-                <p><strong>1. Risk Disclosure:</strong> Financial trading involves substantial risk. Past performance of signals does not guarantee future results. Trade responsibly.</p>
-                <p><strong>2. Non-Refundable:</strong> All VIP channel access passes are digital goods. Once activated, subscriptions cannot be refunded or transferred.</p>
-                <p><strong>3. Confidentiality:</strong> Signals are for personal use only. Unauthorized distribution, reselling, or sharing will result in immediate termination without refund.</p>
-                <p><strong>4. Market Volatility:</strong> We provide analysis, not financial advice. Always conduct your own due diligence before executing trades.</p>
+                <p><strong>1. Risk Disclosure</strong><br><br>Financial trading involves substantial risk. Past performance of signals does not guarantee future results. Trade responsibly.</p>
+                <hr>
+                <p><strong>2. Non-Refundable</strong><br><br>All VIP channel access passes are digital goods. Once activated, subscriptions cannot be refunded or transferred.</p>
+                <hr>
+                <p><strong>3. Confidentiality</strong><br><br>Signals are for personal use only. Unauthorized distribution, reselling, or sharing will result in immediate termination without refund.</p>
+                <hr>
+                <p><strong>4. Market Volatility</strong><br><br>We provide analysis, not financial advice. Always conduct your own due diligence before executing trades.</p>
             </div>
             <button class="btn btn-primary" onclick="acceptTC()">I Have Read &amp; Accept</button>
         </div>
@@ -998,9 +1007,11 @@
         tg.ready();
         if (tg.setHeaderColor) tg.setHeaderColor('#0a0e1a');
 
-        // Your Render backend. Update this if your Render URL ever changes --
-        // it must match RENDER_EXTERNAL_URL in server.py.
-        const BACKEND_URL = "https://telegram-paystack-bot-415x.onrender.com";
+        // The bot appends the live Render backend URL when it launches this Mini App.
+        // The bot appends the live Render backend URL when it launches this Mini App.
+        // Keep the known backend as a compatibility fallback for older bot messages.
+        const backendParam = new URLSearchParams(window.location.search).get('backend');
+        const BACKEND_URL = backendParam ? backendParam.replace(/\/$/, '') : "https://telegram-paystack-bot-415x.onrender.com";
 
         // Referral attribution is intentionally NOT accepted from the browser.
 // The backend reads the referral stored from the bot's /start deep link.
@@ -1131,7 +1142,7 @@
 
             const affNotice = document.getElementById('affiliate-notice');
             affNotice.style.display = 'block';
-            document.getElementById('affiliate-code-display').textContent = 'Attribution is verified server-side.';
+            document.getElementById('affiliate-code-display').textContent = 'Your referral is securely verified before payment.';
 
             document.getElementById('tc-checkbox').checked = false;
             document.getElementById('pay-btn').disabled = true;
@@ -1217,10 +1228,10 @@
                         })
                     });
                 } catch (networkError) {
-                    console.error('Payment server connection failed:', networkError);
-                    throw new Error('The payment server could not be reached. Please try again in a few seconds.');
+                    console.error('Payment server connection failed:', networkError, 'BACKEND_URL:', BACKEND_URL);
+                    throw new Error('The payment server could not be reached. Please reopen the VIP Terminal from the bot and try again.');
                 }
-                const initData = await initRes.json();
+                const initData = await initRes.json().catch(() => ({}));
                 if (!initRes.ok) throw new Error(initData.detail || 'Could not start payment.');
 
                 // Popup V2 normally handles the access_code. If Telegram's embedded
