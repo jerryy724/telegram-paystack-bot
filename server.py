@@ -61,7 +61,7 @@ PAYSTACK_SECRET = os.getenv("PAYSTACK_SECRET_KEY", "")
 MONGO_URI = os.getenv("MONGO_URI", "").strip().strip('"').strip("'")
 MINI_APP_URL = os.getenv("MINI_APP_URL", "https://jerryy724.github.io/telegram-paystack-bot/")
 RENDER_URL = os.getenv("RENDER_EXTERNAL_URL", "https://telegram-paystack-bot-415x.onrender.com")
-MINI_APP_VERSION = "20260904-v9"
+MINI_APP_VERSION = "20260904-v11"
 
 GOLD_CHANNEL_ID = os.getenv("GOLD_CHANNEL_ID", "-1004329655598")
 FOREX_CHANNEL_ID = os.getenv("FOREX_CHANNEL_ID", "-1004451754852")
@@ -1525,7 +1525,6 @@ async def api_initiate_payment(payload: InitiatePaymentRequest):
     reference = f"JAY-{secrets.token_hex(8).upper()}"
     email = f"tg_{telegram_id}@jayempire.com"
     status_token = make_payment_status_token(reference, telegram_id)
-    callback_url = mini_app_payment_return_url(status_token)
 
     # Referral attribution is server-side. The browser cannot choose a referrer.
     lead = leads_col.find_one({"telegram_id": telegram_id}) if leads_col is not None else None
@@ -1580,7 +1579,6 @@ async def api_initiate_payment(payload: InitiatePaymentRequest):
                     "amount": amount_minor,
                     "currency": payload.currency,
                     "reference": reference,
-                    "callback_url": callback_url,
                     "metadata": {
                         "payment_reference": reference,
                         "telegram_id": telegram_id,
@@ -1661,6 +1659,140 @@ async def retry_payment_access(intent):
         logger.exception("Payment access retry failed for %s: %s", intent.get("reference"), e)
     return intent
 
+
+async def _replay_verified_payment_for_recovery(intent: dict, verified: dict):
+    """Run the exact signed charge.success webhook path when a Mini App reload
+    detects a completed Paystack transaction before the webhook has fulfilled it.
+
+    This is an internal recovery path; it does not expose a public fulfillment
+    endpoint and it reuses the same server-side webhook verification/accounting.
+    """
+    data = dict(verified or {})
+    # Paystack verification normally contains metadata, but the internal payment
+    # intent is authoritative for channel/plan/referral fields.
+    data["reference"] = intent["reference"]
+    data["amount"] = verified.get("amount", intent.get("amount_minor"))
+    data["currency"] = verified.get("currency", intent.get("currency"))
+    data["metadata"] = {
+        "telegram_id": intent.get("telegram_id"),
+        "channel_type": intent.get("channel_type"),
+        "plan_key": intent.get("plan_key"),
+        "days": intent.get("days"),
+        "ref_code": intent.get("ref_code"),
+        "is_renewal": intent.get("is_renewal", False),
+        "is_test": intent.get("is_test", False),
+    }
+    payload = {"event": "charge.success", "data": data}
+    body = json.dumps(payload, separators=(",", ":"), default=str).encode()
+    signature = hmac.new(PAYSTACK_SECRET.encode(), body, hashlib.sha512).hexdigest()
+
+    sent = False
+    async def receive():
+        nonlocal sent
+        if sent:
+            return {"type": "http.disconnect"}
+        sent = True
+        return {"type": "http.request", "body": body, "more_body": False}
+
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "path": "/paystack-webhook",
+        "raw_path": b"/paystack-webhook",
+        "query_string": b"",
+        "headers": [
+            (b"content-type", b"application/json"),
+            (b"x-paystack-signature", signature.encode()),
+        ],
+        "client": ("127.0.0.1", 0),
+        "server": ("127.0.0.1", 80),
+        "scheme": "http",
+        "http_version": "1.1",
+    }
+    request = Request(scope, receive)
+    return await paystack_webhook(request, signature)
+
+@app.get("/api/payment-recovery")
+async def api_payment_recovery(reference: Optional[str] = None, init_data: Optional[str] = None, x_telegram_init_data: Optional[str] = Header(None)):
+    init_data = x_telegram_init_data or init_data or ""
+    """Recover a recent successful payment when Telegram/Paystack reloads the Mini App.
+
+    A merely abandoned/pending checkout is never presented as paid. If Paystack
+    already reports success, the same webhook fulfillment path is replayed so the
+    customer receives entitlement and the one-time invite even if the webhook
+    arrived late or the Mini App was reloaded first.
+    """
+    tg = validate_telegram_init_data(init_data)
+    telegram_id = tg["telegram_id"]
+    if payment_intents_col is None:
+        raise HTTPException(status_code=503, detail="Service temporarily unavailable")
+
+    query = {"telegram_id": telegram_id}
+    if reference:
+        query["reference"] = reference
+    else:
+        query["created_at"] = {"$gte": datetime.utcnow() - timedelta(hours=24)}
+
+    intent = payment_intents_col.find_one(query, sort=[("created_at", DESCENDING)])
+    if not intent:
+        return {"status": "none"}
+
+    if intent.get("status") == "fulfilled" and intent.get("invite_link"):
+        return {
+            "status": "fulfilled",
+            "reference": intent["reference"],
+            "invite_link": intent.get("invite_link"),
+            "invite_link_expires_at": intent.get("invite_link_expires_at").isoformat() if intent.get("invite_link_expires_at") else None,
+            "channel_type": intent.get("channel_type"),
+            "plan_key": intent.get("plan_key"),
+            "plan_name": intent.get("plan_name"),
+            "days": intent.get("days"),
+            "is_renewal": bool(intent.get("is_renewal", False)),
+        }
+
+    if intent.get("status") == "access_pending":
+        intent = await retry_payment_access(intent)
+        if intent.get("status") == "fulfilled" and intent.get("invite_link"):
+            return {
+                "status": "fulfilled",
+                "reference": intent["reference"],
+                "invite_link": intent.get("invite_link"),
+                "invite_link_expires_at": intent.get("invite_link_expires_at").isoformat() if intent.get("invite_link_expires_at") else None,
+                "channel_type": intent.get("channel_type"),
+                "plan_key": intent.get("plan_key"),
+                "plan_name": intent.get("plan_name"),
+                "days": intent.get("days"),
+                "is_renewal": bool(intent.get("is_renewal", False)),
+            }
+        return {"status": "access_pending", "reference": intent["reference"]}
+
+    # If the checkout was left open, verify it directly. Only a real Paystack
+    # success is allowed to enter the fulfillment path.
+    verified = await verify_paystack_transaction(intent["reference"])
+    if not verified or verified.get("status") != "success":
+        return {"status": "none"}
+    if verified.get("amount") != intent.get("amount_minor") or verified.get("currency") != intent.get("currency"):
+        logger.error("Payment recovery mismatch for %s", intent["reference"])
+        return {"status": "none"}
+
+    await _replay_verified_payment_for_recovery(intent, verified)
+    latest = payment_intents_col.find_one({"reference": intent["reference"]})
+    if latest and latest.get("status") == "access_pending":
+        latest = await retry_payment_access(latest)
+    if latest and latest.get("status") == "fulfilled" and latest.get("invite_link"):
+        return {
+            "status": "fulfilled",
+            "reference": latest["reference"],
+            "invite_link": latest.get("invite_link"),
+            "invite_link_expires_at": latest.get("invite_link_expires_at").isoformat() if latest.get("invite_link_expires_at") else None,
+            "channel_type": latest.get("channel_type"),
+            "plan_key": latest.get("plan_key"),
+            "plan_name": latest.get("plan_name"),
+            "days": latest.get("days"),
+            "is_renewal": bool(latest.get("is_renewal", False)),
+        }
+    return {"status": latest.get("status", "processing") if latest else "processing", "reference": intent["reference"]}
+
 @app.get("/api/payment-status")
 async def api_payment_status(
     reference: str,
@@ -1685,6 +1817,28 @@ async def api_payment_status(
     )
     if not intent:
         raise HTTPException(status_code=404, detail="Payment not found")
+
+    # Frontend polling is also a recovery path. If the Paystack webhook is delayed
+    # or never reaches the service, periodically verify the reference directly and
+    # run the exact same fulfillment path. This is throttled so a 2-second frontend
+    # poll does not create a Paystack API request on every poll.
+    if intent.get("status") in {"pending", "processing"}:
+        last_check = intent.get("last_recovery_check_at")
+        if not last_check or (datetime.utcnow() - last_check).total_seconds() >= 10:
+            payment_intents_col.update_one(
+                {"reference": reference},
+                {"$set": {"last_recovery_check_at": datetime.utcnow()}}
+            )
+            try:
+                verified = await verify_paystack_transaction(reference)
+                if (verified and verified.get("status") == "success"
+                        and verified.get("amount") == intent.get("amount_minor")
+                        and verified.get("currency") == intent.get("currency")):
+                    await _replay_verified_payment_for_recovery(intent, verified)
+                    intent = payment_intents_col.find_one({"reference": reference}, {"_id": 0}) or intent
+            except Exception as e:
+                logger.warning("Payment status recovery check failed for %s: %s", reference, e)
+
     if intent.get("status") == "access_pending":
         intent = await retry_payment_access(intent)
     return {
