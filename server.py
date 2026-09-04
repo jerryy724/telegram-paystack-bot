@@ -334,118 +334,136 @@ def clear_affiliate_onboarding(telegram_id):
 
 async def start_cmd(update: Update, context):
     user = update.effective_user
-    if not user:
+    if not user or not update.message:
         return
 
     chat_id = user.id
     username = user.username or ""
-    text = update.message.text or ""
 
-    logger.info(f"/start from {chat_id} (@{username})")
-
+    # Telegram exposes deep-link payloads in context.args. Using context.args
+    # is more reliable than reparsing the raw /start message text.
     ref_code = None
-    if " " in text:
-        payload = text.split(" ", 1)[1].strip()
-        if payload.startswith("ref_"):
+    if context.args:
+        payload = str(context.args[0]).strip()
+        if payload.lower().startswith("ref_"):
             candidate = payload[4:].strip().upper()
-            ref_code = candidate if re.fullmatch(r"JAY[A-Z0-9]{7}", candidate) else None
-            if ref_code:
-                # Persist referral attribution in MongoDB; do not rely on Render memory.
-                if leads_col is not None:
-                    leads_col.update_one(
-                        {"telegram_id": chat_id, "$or": [{"referred_by": {"$exists": False}}, {"referred_by": None}, {"referred_by": ""}]},
-                        {"$set": {"referred_by": ref_code, "referral_locked_at": datetime.utcnow()}, "$setOnInsert": {"telegram_id": chat_id, "started_at": datetime.utcnow()}},
-                        upsert=True
-                    )
-                if customers_col is not None:
-                    customers_col.update_one(
-                        {"telegram_id": chat_id, "$or": [{"referred_by": {"$exists": False}}, {"referred_by": None}, {"referred_by": ""}]},
-                        {"$set": {"referred_by": ref_code, "referral_locked_at": datetime.utcnow()}},
-                        upsert=True
-                    )
-            logger.info(f"Referral detected: {ref_code} for user {chat_id}")
+            if re.fullmatch(r"JAY[A-Z0-9]{7}", candidate) and affiliates_col is not None:
+                affiliate_for_link = affiliates_col.find_one({"ref_code": candidate, "is_active": True})
+                if affiliate_for_link and int(affiliate_for_link.get("telegram_id", 0)) != int(chat_id):
+                    ref_code = candidate
 
+    logger.info("/start from %s (@%s), referral=%s", chat_id, username, ref_code or "none")
+
+    # Record the lead and lock the first valid referral. A later affiliate link
+    # cannot overwrite the original attribution.
     if leads_col is not None:
         try:
-            leads_col.update_one(
-                {"telegram_id": chat_id},
-                {
-                    "$setOnInsert": {
-                        "telegram_id": chat_id,
-                        "first_name": user.first_name,
-                        "username": username,
-                        "started_at": datetime.utcnow(),
-                        "converted": False,
-                        "followup_sent": False,
-                        "referred_by": ref_code
-                    }
-                },
-                upsert=True
-            )
+            lead = leads_col.find_one({"telegram_id": chat_id})
+            if not lead:
+                leads_col.insert_one({
+                    "telegram_id": chat_id,
+                    "first_name": user.first_name or "",
+                    "username": username,
+                    "started_at": datetime.utcnow(),
+                    "converted": False,
+                    "followup_sent": False,
+                    "referred_by": ref_code or None,
+                    "referral_locked_at": datetime.utcnow() if ref_code else None,
+                })
+            else:
+                update_fields = {"first_name": user.first_name or "", "username": username, "last_seen_at": datetime.utcnow()}
+                if ref_code and not lead.get("referred_by"):
+                    update_fields.update({"referred_by": ref_code, "referral_locked_at": datetime.utcnow()})
+                leads_col.update_one({"_id": lead["_id"]}, {"$set": update_fields})
         except Exception as e:
-            logger.error(f"Lead logging error: {e}")
+            logger.exception("Lead logging error: %s", e)
 
-    is_affiliate = None
-    if affiliates_col is not None:
-        is_affiliate = affiliates_col.find_one({"telegram_id": chat_id, "is_active": True})
+    if customers_col is not None:
+        try:
+            customer = customers_col.find_one({"telegram_id": chat_id})
+            update_fields = {
+                "telegram_id": chat_id,
+                "first_name": user.first_name or "",
+                "last_name": user.last_name or "",
+                "username": username,
+                "last_seen_at": datetime.utcnow(),
+            }
+            if ref_code and (not customer or not customer.get("referred_by")):
+                update_fields["referred_by"] = ref_code
+                update_fields["referral_locked_at"] = datetime.utcnow()
+            customers_col.update_one({"telegram_id": chat_id}, {"$set": update_fields, "$setOnInsert": {"paid_purchase_count": 0}}, upsert=True)
+        except Exception as e:
+            logger.exception("Customer logging error: %s", e)
 
-    kb = [[InlineKeyboardButton("📈 Subscribe", web_app=WebAppInfo(url=MINI_APP_URL))]]
+    is_affiliate = affiliates_col.find_one({"telegram_id": chat_id, "is_active": True}) if affiliates_col is not None else None
 
-    if is_affiliate is None and not ref_code:
-        kb.append([InlineKeyboardButton("🤝 Become an Affiliate", callback_data="affiliate_start")])
-    elif is_affiliate is not None:
-        kb.append([InlineKeyboardButton("📊 My Affiliate Dashboard", callback_data="affiliate_dashboard")])
-        active_refs = 0
-        if referrals_col is not None:
-            active_refs = referrals_col.count_documents({
-                "affiliate_id": is_affiliate["_id"],
-                "is_active": True
-            })
-        if active_refs >= REFERRAL_MILESTONE and not is_affiliate.get("milestone_notified"):
-            await notify_milestone(update, is_affiliate, active_refs)
-
+    # Referral deep-link users receive ONLY the subscription button.
     if ref_code:
+        kb = [[InlineKeyboardButton("📈 Subscribe", web_app=WebAppInfo(url=MINI_APP_URL))]]
         welcome_text = (
-            "👑 <b>JAY EMPIRE VIP TERMINAL</b>\n"
-            "<i>Success Is Our Aim</i>\n\n"
+            "👑 <b>JAY EMPIRE VIP TERMINAL</b>\n\n"
             "🎯 <b>You’ve been invited to JAY Trading Hub.</b>\n\n"
-            "JAY Trading Hub is a premium trading community for serious traders seeking structured market insights, educational resources, trading ideas and private member-only updates.\n\n"
-            "Your invitation gives you access to our secure VIP Terminal, where you can review the available plans and choose the subscription that fits you best.\n\n"
-            "<b>Inside the Hub:</b>\n"
-            "• Premium Gold &amp; FX trading resources\n"
-            "• Market insights and educational content\n"
-            "• Private community access\n"
-            "• Member-only updates and opportunities\n\n"
-            "Tap <b>📈 Subscribe</b> below to view the available plans and begin your access."
+            "Choose a VIP plan, accept the terms, complete payment securely through Paystack, and receive your private channel access link after payment is verified.\n\n"
+            "Tap <b>📈 Subscribe</b> below to get started."
         )
     else:
+        kb = [[InlineKeyboardButton("📈 Subscribe", web_app=WebAppInfo(url=MINI_APP_URL))]]
+        if is_affiliate is None:
+            kb.append([InlineKeyboardButton("🤝 Become an Affiliate", callback_data="affiliate_start")])
+        else:
+            kb.append([InlineKeyboardButton("📊 My Affiliate Dashboard", callback_data="affiliate_dashboard")])
+
         welcome_text = (
             "👑 <b>JAY EMPIRE VIP TERMINAL</b>\n"
             "<i>Success Is Our Aim</i>\n\n"
-            "📈 <b>Subscribe</b> — get institutional-grade Gold &amp; FX signals\n"
-            + ("🤝 <b>Become an Affiliate</b> — earn commission sharing your link\n\n" if not ref_code and is_affiliate is None else "")
-            + "Choose an option below to get started:"
+            "📈 <b>Subscribe</b> — access premium Gold &amp; FX signals and private member updates.\n\n"
+            "Choose an option below to get started."
         )
 
     await update.message.reply_text(welcome_text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(kb))
 
+
 async def notify_milestone(update, affiliate, count):
+    await notify_milestone_direct(affiliate, count)
+
+
+async def notify_milestone_direct(affiliate, count):
+    """Notify both the affiliate and the admin when the milestone is reached."""
     try:
-        await update.message.reply_text(
-            f"🏆 <b>Milestone unlocked!</b>\n\n"
-            f"You've referred {count} active members and earned <b>Lifetime VIP Access</b>.\n\n"
-            f"Contact @{ADMIN_USERNAME} to claim your reward. Show this message as proof.\n\n"
-            f"Your code: <code>{affiliate['ref_code']}</code>",
+        bot = Bot(token=BOT_TOKEN)
+        affiliate_chat_id = int(affiliate["telegram_id"])
+        await bot.send_message(
+            chat_id=affiliate_chat_id,
+            text=(
+                "🏆 <b>Milestone Unlocked!</b>\n\n"
+                f"You have reached <b>{count} active referrals</b>.\n\n"
+                "You have earned the Lifetime VIP reward.\n\n"
+                f"Referral Code: <code>{html.escape(str(affiliate.get('ref_code','')))}</code>"
+            ),
             parse_mode="HTML"
         )
+        if ADMIN_TELEGRAM_ID:
+            await bot.send_message(
+                chat_id=ADMIN_TELEGRAM_ID,
+                text=(
+                    "🏆 <b>Affiliate Milestone Achieved</b>\n\n"
+                    f"Affiliate: {html.escape(str(affiliate.get('full_name','N/A')))}\n"
+                    f"Username: @{html.escape(str(affiliate.get('username','N/A')))}\n"
+                    f"Code: <code>{html.escape(str(affiliate.get('ref_code','')))}</code>\n"
+                    f"Active Referrals: <b>{count}</b>\n\n"
+                    "Lifetime VIP reward milestone has been reached."
+                ),
+                parse_mode="HTML"
+            )
         if affiliates_col is not None:
             affiliates_col.update_one(
                 {"_id": affiliate["_id"]},
                 {"$set": {"milestone_notified": True, "milestone_reached_at": datetime.utcnow()}}
             )
-        logger.info(f"Milestone notified for affiliate: {affiliate['ref_code']}")
+        logger.info("Milestone notification sent for affiliate %s", affiliate.get("ref_code"))
     except Exception as e:
-        logger.error(f"Milestone notify error: {e}")
+        logger.exception("Milestone notification failed: %s", e)
+
 
 async def callback_handler(update: Update, context):
     query = update.callback_query
@@ -495,8 +513,8 @@ async def show_affiliate_confirmation(chat_id, bot):
             f"<b>Confirm Affiliate Account</b>\n\n"
             f"Name: {html.escape(str(d.get('full_name', '')))}\n"
             f"Mobile Money: {html.escape(str(d.get('payout_details_input', '')))}\n\n"
-            "If these details are correct, tap <b>Confirm and Create</b>. "
-            "Your affiliate account will be created directly in MongoDB and your unique referral link will be generated."
+            "If these details are correct, tap <b>Confirm and Create</b>.\n\n"
+            "Your affiliate account will be created and your unique referral link will be generated."
         ),
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(kb)
@@ -611,13 +629,12 @@ async def handle_affiliate_callback(chat_id, action, username=""):
             chat_id=chat_id,
             text=(
                 "🎉 <b>Affiliate Account Created Successfully!</b>\n\n"
-                f"Name: {html.escape(full_name)}\n"
-                f"Mobile Money: <code>{html.escape(momo_number)}</code>\n\n"
-                f"<b>Your unique referral link:</b>\n{html.escape(ref_link)}\n\n"
+                "🎉 <b>Congratulations!</b>\n\n"
+                "Your affiliate referral link has been created successfully.\n\n"
+                "Share this link with customers to receive your eligible commissions.\n\n"
+                f"<b>Your Referral Link:</b>\n<code>{html.escape(ref_link)}</code>\n\n"
                 f"Commission: {COMMISSION_FIRST_SALE}% first qualifying sale | {COMMISSION_RENEWAL}% renewal\n"
-                f"Milestone: {REFERRAL_MILESTONE} active referrals = Lifetime VIP reward\n\n"
-                "Share this link with customers. When they start the bot through your link, their referral attribution is locked to you before checkout. "
-                "Paystack is only used later for the customer's normal subscription payment; it is not involved in affiliate creation or payouts."
+                f"Milestone: {REFERRAL_MILESTONE} active referrals = Lifetime VIP reward"
             ),
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup([
@@ -654,7 +671,7 @@ async def handle_affiliate_callback(chat_id, action, username=""):
             f"👑 <b>JAY Trading Hub Affiliate Program</b>\n\n"
             f"<b>💰 Commission:</b> {COMMISSION_FIRST_SALE}% on a first qualifying sale and {COMMISSION_RENEWAL}% on renewals.\n"
             f"<b>🏆 Milestone:</b> {REFERRAL_MILESTONE} active referrals = Lifetime VIP reward.\n"
-            f"<b>💸 Withdrawal:</b> Minimum GHS {MIN_WITHDRAWAL_MINOR/100:,.2f}; payouts are sent manually by JAY Trading Hub.\n\n"
+            f"<b>💸 Withdrawal:</b> Minimum GHS {MIN_WITHDRAWAL_MINOR/100:,.2f}. Withdrawals are processed within 48 hours upon request. Withdrawals placed on weekends will be processed on the next working day.\n\n"
             f"No fake signups, self-referrals or spam. By joining, you agree to these terms and to provide accurate payout information.\n\n"
             "Tap <b>I Agree and Join</b> to continue."
         )
@@ -984,7 +1001,8 @@ async def show_payout_info(chat_id, bot):
         f"💳 <b>Payout Details</b>\n\n"
         f"Method: {html.escape(method)}\n"
         f"Details: {html.escape(str(details))}\n\n"
-        "Payouts are sent manually by JAY Trading Hub. Paystack is used only for customer subscription payments."
+        "Withdrawals are processed within 48 hours upon request.\n\n"
+        "Withdrawals placed on weekends will be processed on the next working day."
     )
     await bot.send_message(chat_id=chat_id, text=text, parse_mode="HTML")
 
@@ -998,7 +1016,7 @@ async def generate_single_use_invite(channel_id: str):
         link = await bot.create_chat_invite_link(
             chat_id=channel_id,
             member_limit=1,
-            expire_date=datetime.utcnow() + timedelta(minutes=30),
+            expire_date=datetime.utcnow() + timedelta(minutes=5),
             name=f"paid-{secrets.token_hex(4)}"
         )
         return link.invite_link
@@ -1154,10 +1172,13 @@ except Exception:
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[mini_origin],
+    # The Mini App is a public GitHub Pages site and Telegram's WebView can
+    # present different origins. No cookies/credentials are used; every
+    # protected payment request is authenticated with Telegram initData.
+    allow_origins=["*"],
     allow_credentials=False,
     allow_methods=["GET", "POST", "OPTIONS"],
-    allow_headers=["Content-Type", "X-Admin-Key", "X-Paystack-Signature", "X-Telegram-Bot-Api-Secret-Token", "X-Telegram-Init-Data"],
+    allow_headers=["*"],
 )
 
 # ==============================================================================
@@ -1302,17 +1323,22 @@ async def api_initiate_payment(payload: InitiatePaymentRequest):
                     },
                 },
                 headers=get_paystack_headers(),
-                timeout=15.0
+                timeout=20.0
             )
-            data = res.json()
-        except httpx.HTTPError:
+            try:
+                data = res.json()
+            except ValueError:
+                data = {"status": False, "message": res.text[:500]}
+        except httpx.HTTPError as e:
+            logger.exception("Paystack initialize HTTP error: %s", e)
             payment_intents_col.update_one({"reference": reference}, {"$set": {"status": "failed", "failed_at": datetime.utcnow()}})
-            raise HTTPException(status_code=502, detail="Payment provider unavailable. Please try again.")
+            raise HTTPException(status_code=502, detail="Could not reach Paystack. Please try again.")
 
-    if not data.get("status") or not data.get("data", {}).get("access_code"):
-        logger.error("Paystack initialize failed: %s", data)
-        payment_intents_col.update_one({"reference": reference}, {"$set": {"status": "failed", "failed_at": datetime.utcnow()}})
-        raise HTTPException(status_code=502, detail="Could not start payment. Please try again.")
+    if not data.get("status") or not data.get("data", {}).get("access_code") or not data.get("data", {}).get("authorization_url"):
+        logger.error("Paystack initialize failed (HTTP %s): %s", res.status_code, data)
+        payment_intents_col.update_one({"reference": reference}, {"$set": {"status": "failed", "failed_at": datetime.utcnow(), "paystack_error": data.get("message")}})
+        detail = data.get("message") or "Could not start payment. Please try again."
+        raise HTTPException(status_code=502, detail=f"Paystack: {detail}")
 
     access_code = data["data"]["access_code"]
     authorization_url = data["data"].get("authorization_url")
@@ -1627,6 +1653,15 @@ async def paystack_webhook(request: Request, x_paystack_signature: str = Header(
                             logger.exception("Affiliate commission accounting failed for %s", reference)
                             raise
 
+                        # Check the lifetime milestone immediately after a new qualifying referral.
+                        try:
+                            fresh_affiliate = affiliates_col.find_one({"_id": affiliate["_id"]})
+                            active_refs = referrals_col.count_documents({"affiliate_id": affiliate["_id"], "is_active": True})
+                            if fresh_affiliate and active_refs >= REFERRAL_MILESTONE and not fresh_affiliate.get("milestone_notified"):
+                                await notify_milestone_direct(fresh_affiliate, active_refs)
+                        except Exception as e:
+                            logger.exception("Milestone check failed: %s", e)
+
                         logger.info(f"Affiliate {ref_code} earned {rate}% = {commission_minor} GHS minor units from {tg_id}")
 
             # Mark the payment fulfilled only after all DB-side entitlement/accounting
@@ -1640,6 +1675,28 @@ async def paystack_webhook(request: Request, x_paystack_signature: str = Header(
                 else:
                     customer_update["$set"] = {}
                 customers_col.update_one({"telegram_id": tg_id}, customer_update, upsert=True)
+
+            # Notify the admin for every successful referred signup. The bot sends
+            # this DM from its own Telegram account to ADMIN_TELEGRAM_ID.
+            if ref_code and ADMIN_TELEGRAM_ID:
+                try:
+                    await Bot(token=BOT_TOKEN).send_message(
+                        chat_id=ADMIN_TELEGRAM_ID,
+                        text=(
+                            "🆕 <b>New Referred Signup</b>\n\n"
+                            f"Customer ID: <code>{tg_id}</code>\n"
+                            f"Affiliate: <b>{html.escape(str((affiliate or {}).get('full_name','N/A')))}</b>\n"
+                            f"Referral Code: <code>{html.escape(str(ref_code))}</code>\n"
+                            f"Channel: {html.escape(channel_type.upper())}\n"
+                            f"Plan: {html.escape(str(intent.get('plan_key','N/A')))}\n"
+                            f"Amount: <b>{amount/100:,.2f} {html.escape(str(data.get('currency','GHS')))}</b>\n"
+                            f"Paystack Ref: <code>{html.escape(str(reference))}</code>\n\n"
+                            "Payment was received by the merchant account. Affiliate commission is recorded internally."
+                        ),
+                        parse_mode="HTML"
+                    )
+                except Exception as e:
+                    logger.error("Failed to notify admin about referred signup: %s", e)
 
             payment_intents_col.update_one(
                 {"reference": reference, "status": {"$ne": "fulfilled"}},
@@ -1659,19 +1716,51 @@ async def paystack_webhook(request: Request, x_paystack_signature: str = Header(
                 else:
                     invite_link = await generate_single_use_invite(channel_id)
                     if invite_link:
+                        invite_expires_at = now + timedelta(minutes=5)
+                        if users_col is not None:
+                            users_col.update_one(
+                                {"telegram_id": tg_id, "channel_type": channel_type},
+                                {"$set": {"invite_link": invite_link, "invite_link_expires_at": invite_expires_at}}
+                            )
                         btn = InlineKeyboardMarkup([[InlineKeyboardButton(f"Enter {name}", url=invite_link)]])
                         await bot.send_message(
                             chat_id=tg_id,
-                            text=f"✅ PAYMENT VERIFIED!\n\nPlan: {channel_type.upper()}\nExpires: {'Lifetime' if expires is None else expires.strftime('%B %d, %Y')}\n\nTap below (this link works once):",
+                            text=(
+                                "✅ <b>PAYMENT VERIFIED!</b>\n\n"
+                                f"Plan: {channel_type.upper()}\n"
+                                f"Access: {'Lifetime' if expires is None else expires.strftime('%B %d, %Y')}\n\n"
+                                "Your private channel invite link expires in <b>5 minutes</b> and can be used <b>once</b>.\n\n"
+                                "Tap the button below to join now."
+                            ),
                             parse_mode="HTML",
                             reply_markup=btn
                         )
                     else:
                         await bot.send_message(
                             chat_id=tg_id,
-                            text=f"✅ Payment verified, but we couldn't generate your invite link automatically. Contact @{ADMIN_USERNAME} with your payment reference: {reference}",
+                            text=(
+                                "✅ <b>Payment Verified</b>\n\n"
+                                "Your payment was received, but the private channel invite could not be generated automatically.\n\n"
+                                f"Payment Reference: <code>{html.escape(str(reference))}</code>\n"
+                                f"Please contact @{ADMIN_USERNAME}."
+                            ),
                             parse_mode="HTML",
                         )
+                        if ADMIN_TELEGRAM_ID:
+                            try:
+                                await bot.send_message(
+                                    chat_id=ADMIN_TELEGRAM_ID,
+                                    text=(
+                                        "⚠️ <b>Invite Link Generation Failed</b>\n\n"
+                                        f"Customer ID: <code>{tg_id}</code>\n"
+                                        f"Channel: {html.escape(channel_type.upper())}\n"
+                                        f"Payment Ref: <code>{html.escape(str(reference))}</code>\n\n"
+                                        "Check that the bot is an administrator of the VIP channel with permission to invite users by link."
+                                    ),
+                                    parse_mode="HTML"
+                                )
+                            except Exception as e:
+                                logger.error("Failed to notify admin about invite failure: %s", e)
             except Exception as e:
                 logger.error(f"Access message failed: {e}")
 
