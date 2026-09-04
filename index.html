@@ -970,7 +970,7 @@
                 <h2 class="card-title success-title" id="success-title">Congratulations!</h2>
                 <p class="card-desc" id="success-message">Your payment has been confirmed and your VIP access is ready.</p>
                 <div id="success-access-wrap" style="display:none; margin-top:20px;">
-                    <a id="success-access-btn" class="btn btn-primary" href="#" target="_blank" rel="noopener" style="display:block; text-decoration:none;">🔐 Access Your VIP Channel</a>
+                    <a id="success-access-btn" class="btn btn-primary" href="#" target="_blank" rel="noopener" onclick="openVipInvite(event)" style="display:block; text-decoration:none;">🔐 Access Your VIP Channel</a>
                     <p class="card-desc" style="margin-top:12px; font-size:12px;">This private invite is one-time use and expires in 5 minutes.</p>
                 </div>
                 <button class="btn btn-secondary" onclick="switchStep(1)" style="margin-top:16px;">Back to Main Menu</button>
@@ -1177,6 +1177,20 @@
             btn.disabled = !cb.checked;
         }
 
+        function openVipInvite(event) {
+            if (event) event.preventDefault();
+            const btn = document.getElementById('success-access-btn');
+            const link = btn && btn.href && btn.href !== window.location.href ? btn.href : null;
+            if (!link) return;
+            try {
+                if (tg.openTelegramLink) {
+                    tg.openTelegramLink(link);
+                    return;
+                }
+            } catch (e) {}
+            window.open(link, '_blank');
+        }
+
         function showPaymentSuccess(data) {
             const title = document.getElementById('success-title');
             const message = document.getElementById('success-message');
@@ -1270,38 +1284,52 @@
         }
 
         async function recoverPendingPayment() {
-            const params = new URLSearchParams(window.location.search);
-            let reference = params.get('reference') || params.get('trxref') || params.get('payment_ref');
-            let statusToken = params.get('payment_status_token');
-
+            // IMPORTANT: Paystack's resumeTransaction flow stays inside this Mini App.
+            // We therefore recover from our backend rather than relying on a Paystack
+            // redirect, browser history, or the previous JavaScript step.
+            let reference = null;
             try {
-                const saved = JSON.parse(localStorage.getItem('jay_pending_payment') || 'null');
-                if (!reference && saved && saved.reference &&
-                    Date.now() - Number(saved.saved_at || 0) < 30 * 60 * 1000 &&
-                    (saved.telegram_id === null || saved.telegram_id === undefined || saved.telegram_id === (tg.initDataUnsafe?.user?.id || null))) {
-                    reference = saved.reference;
-                }
-                if (!statusToken && saved?.status_token) {
-                    statusToken = saved.status_token;
+                const params = new URLSearchParams(window.location.search);
+                reference = params.get('reference') || params.get('trxref') || params.get('payment_ref');
+                if (!reference) {
+                    const saved = JSON.parse(localStorage.getItem('jay_pending_payment') || 'null');
+                    if (saved && saved.reference && Date.now() - Number(saved.saved_at || 0) < 2 * 60 * 60 * 1000) {
+                        reference = saved.reference;
+                    }
                 }
             } catch (e) {}
 
-            if (!reference) return;
-            if (!statusToken && !tg.initData) return;
+            if (!tg.initData) return;
 
-            savePendingPayment(reference, statusToken);
+            try {
+                const query = reference ? `?reference=${encodeURIComponent(reference)}` : '';
+                const res = await fetch(`${BACKEND_URL}/api/payment-recovery${query}`, {
+                    headers: { 'X-Telegram-Init-Data': tg.initData },
+                    cache: 'no-store'
+                });
+                if (!res.ok) return;
+                const data = await res.json();
+                if (data.status === 'fulfilled' && data.invite_link) {
+                    try { localStorage.removeItem('jay_pending_payment'); } catch (e) {}
+                    showPaymentSuccess(data);
+                    return;
+                }
 
-            // A returned/reloaded Mini App must never restart at Terms & Conditions
-            // when there is a recent payment reference.
-            switchStep('success');
-            document.getElementById('success-title').textContent = 'Confirming Payment…';
-            document.getElementById('success-message').textContent = 'Your payment was completed. We are confirming your VIP access and preparing your private link.';
-            document.getElementById('success-access-wrap').style.display = 'none';
-
-            const completed = await startPaymentMonitor(reference, statusToken);
-            if (!completed) {
-                document.getElementById('success-title').textContent = 'Payment Received';
-                document.getElementById('success-message').textContent = 'Your payment has been received. Your VIP access is still being prepared. Please keep this terminal open for a moment.';
+                // A genuinely unpaid/abandoned checkout must NOT reopen the
+                // "Confirming Payment" screen. The customer simply gets the normal
+                // subscription menu again.
+                if (data.status === 'processing' || data.status === 'access_pending') {
+                    const ref = data.reference || reference;
+                    if (ref) {
+                        switchStep('success');
+                        document.getElementById('success-title').textContent = 'Confirming Payment…';
+                        document.getElementById('success-message').textContent = 'Your payment was received. We are preparing your VIP access now.';
+                        document.getElementById('success-access-wrap').style.display = 'none';
+                        await startPaymentMonitor(ref, null);
+                    }
+                }
+            } catch (e) {
+                console.log('Payment recovery check:', e);
             }
         }
 
@@ -1379,7 +1407,7 @@
 
         // Recover a payment if Paystack returned/reloaded the Mini App after checkout.
         // This runs after the page has all of its UI functions available.
-        recoverPendingPayment();
+        setTimeout(() => { recoverPendingPayment(); }, 150);
     </script>
 </body>
     </html>
