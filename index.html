@@ -967,13 +967,17 @@
         <section id="step-success" class="panel">
             <div class="glass-card" style="text-align: center;">
                 <div class="success-ring">👑</div>
-                <h2 class="card-title success-title">Access Granted</h2>
-                <p class="card-desc">Your payment was successful. Check your Telegram chat — we've sent you a private, one-time invite link to the VIP channel.</p>
-                <button class="btn btn-secondary" onclick="switchStep(1)">Back to Main Menu</button>
+                <h2 class="card-title success-title" id="success-title">Congratulations!</h2>
+                <p class="card-desc" id="success-message">Your payment has been confirmed and your VIP access is ready.</p>
+                <div id="success-access-wrap" style="display:none; margin-top:20px;">
+                    <a id="success-access-btn" class="btn btn-primary" href="#" target="_blank" rel="noopener" style="display:block; text-decoration:none;">🔐 Access Your VIP Channel</a>
+                    <p class="card-desc" style="margin-top:12px; font-size:12px;">This private invite is one-time use and expires in 5 minutes.</p>
+                </div>
+                <button class="btn btn-secondary" onclick="switchStep(1)" style="margin-top:16px;">Back to Main Menu</button>
             </div>
 
             <div class="contact-bar">
-                Didn't get a message? <a href="https://t.me/jay_empire247" target="_blank">Contact Admin</a>
+                Need help? <a href="https://t.me/jay_empire247" target="_blank">Contact Admin</a>
             </div>
         </section>
 
@@ -1007,7 +1011,6 @@
         tg.ready();
         if (tg.setHeaderColor) tg.setHeaderColor('#0a0e1a');
 
-        // The bot appends the live Render backend URL when it launches this Mini App.
         // The bot appends the live Render backend URL when it launches this Mini App.
         // Keep the known backend as a compatibility fallback for older bot messages.
         const backendParam = new URLSearchParams(window.location.search).get('backend');
@@ -1174,6 +1177,30 @@
             btn.disabled = !cb.checked;
         }
 
+        function showPaymentSuccess(data) {
+            const title = document.getElementById('success-title');
+            const message = document.getElementById('success-message');
+            const wrap = document.getElementById('success-access-wrap');
+            const btn = document.getElementById('success-access-btn');
+            const channelName = data.channel_type === 'gold' ? 'JAY GOLD MASTER VIP' : 'JAY FX PREMIUM SIGNALS';
+            const planText = data.plan_name || (data.days ? `${data.days}-day access` : 'VIP access');
+
+            title.textContent = 'Congratulations!';
+            if (data.is_renewal) {
+                message.textContent = `Your payment has been confirmed. Your ${channelName} subscription has been renewed successfully.`;
+                wrap.style.display = 'none';
+            } else if (data.invite_link) {
+                message.textContent = `Welcome to the inner circle. Your ${planText} for ${channelName} has been confirmed and your VIP access is ready.`;
+                btn.href = data.invite_link;
+                btn.textContent = `🔐 Access ${channelName}`;
+                wrap.style.display = 'block';
+            } else {
+                message.textContent = 'Your payment has been confirmed. Your VIP access is being prepared. Please check Telegram for your access link.';
+                wrap.style.display = 'none';
+            }
+            switchStep('success');
+        }
+
         async function pollPayment(reference, initData) {
             for (let attempt = 0; attempt < 60; attempt++) {
                 await new Promise(resolve => setTimeout(resolve, 2000));
@@ -1184,8 +1211,12 @@
                     if (!res.ok) continue;
                     const data = await res.json();
                     if (data.status === 'fulfilled') {
-                        switchStep('success');
+                        showPaymentSuccess(data);
                         return true;
+                    }
+                    if (data.status === 'access_pending') {
+                        tg.showAlert ? tg.showAlert('Payment confirmed. Your VIP access link is being prepared. Please check your Telegram messages.') : alert('Payment confirmed. Your VIP access link is being prepared.');
+                        return false;
                     }
                     if (data.status === 'failed') {
                         throw new Error('Payment failed. Please try again.');
