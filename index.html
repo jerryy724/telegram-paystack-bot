@@ -1186,23 +1186,33 @@
             const planText = data.plan_name || (data.days ? `${data.days}-day access` : 'VIP access');
 
             title.textContent = 'Congratulations!';
-            if (data.is_renewal) {
-                message.textContent = `Your payment has been confirmed. Your ${channelName} subscription has been renewed successfully.`;
-                wrap.style.display = 'none';
-            } else if (data.invite_link) {
-                message.textContent = `Welcome to the inner circle. Your ${planText} for ${channelName} has been confirmed and your VIP access is ready.`;
+            if (data.invite_link) {
+                message.textContent = `Your payment has been approved. Your ${planText} for ${channelName} is now active. Your private VIP access is ready.`;
                 btn.href = data.invite_link;
-                btn.textContent = `🔐 Access ${channelName}`;
+                btn.textContent = `🔐 Access ${channelName} Now`;
                 wrap.style.display = 'block';
             } else {
-                message.textContent = 'Your payment has been confirmed. Your VIP access is being prepared. Please check Telegram for your access link.';
+                message.textContent = `Your payment has been approved for ${planText}. Your VIP access is still being prepared. Please wait a moment and try again.`;
                 wrap.style.display = 'none';
             }
             switchStep('success');
         }
 
         async function pollPayment(reference, initData) {
-            for (let attempt = 0; attempt < 60; attempt++) {
+            if (!reference || !initData) return false;
+
+            // Keep the payment reference across Paystack/Telegram WebView redirects.
+            // If the checkout reloads this page after payment, recovery can continue
+            // from the same reference instead of returning the customer to checkout.
+            try {
+                localStorage.setItem('jay_pending_payment', JSON.stringify({
+                    reference: reference,
+                    telegram_id: tg.initDataUnsafe?.user?.id || null,
+                    saved_at: Date.now()
+                }));
+            } catch (e) {}
+
+            for (let attempt = 0; attempt < 180; attempt++) {
                 await new Promise(resolve => setTimeout(resolve, 2000));
                 try {
                     const res = await fetch(`${BACKEND_URL}/api/payment-status?reference=${encodeURIComponent(reference)}`, {
@@ -1210,15 +1220,17 @@
                     });
                     if (!res.ok) continue;
                     const data = await res.json();
-                    if (data.status === 'fulfilled') {
+                    if (data.status === 'fulfilled' && data.invite_link) {
+                        try { localStorage.removeItem('jay_pending_payment'); } catch (e) {}
                         showPaymentSuccess(data);
                         return true;
                     }
                     if (data.status === 'access_pending') {
-                        tg.showAlert ? tg.showAlert('Payment confirmed. Your VIP access link is being prepared. Please check your Telegram messages.') : alert('Payment confirmed. Your VIP access link is being prepared.');
-                        return false;
+                        // The backend will retry invite generation on the next poll.
+                        continue;
                     }
                     if (data.status === 'failed') {
+                        try { localStorage.removeItem('jay_pending_payment'); } catch (e) {}
                         throw new Error('Payment failed. Please try again.');
                     }
                 } catch (e) {
@@ -1226,6 +1238,47 @@
                 }
             }
             return false;
+        }
+
+        async function recoverPendingPayment() {
+            if (!tg.initData) return;
+
+            let reference = new URLSearchParams(window.location.search).get('reference')
+                || new URLSearchParams(window.location.search).get('trxref')
+                || new URLSearchParams(window.location.search).get('payment_ref');
+
+            if (reference) {
+                try {
+                    localStorage.setItem('jay_pending_payment', JSON.stringify({
+                        reference: reference,
+                        telegram_id: tg.initDataUnsafe?.user?.id || null,
+                        saved_at: Date.now()
+                    }));
+                } catch (e) {}
+            } else {
+                try {
+                    const saved = JSON.parse(localStorage.getItem('jay_pending_payment') || 'null');
+                    if (saved && saved.telegram_id === (tg.initDataUnsafe?.user?.id || null) &&
+                        Date.now() - Number(saved.saved_at || 0) < 30 * 60 * 1000) {
+                        reference = saved.reference;
+                    }
+                } catch (e) {}
+            }
+
+            if (!reference) return;
+
+            // Show a clean confirmation state while the webhook/access preparation
+            // finishes. Do not send the customer back through Terms & Conditions.
+            switchStep('success');
+            document.getElementById('success-title').textContent = 'Confirming Payment…';
+            document.getElementById('success-message').textContent = 'Your payment was completed. We are confirming your VIP access and preparing your private link.';
+            document.getElementById('success-access-wrap').style.display = 'none';
+
+            const completed = await pollPayment(reference, tg.initData);
+            if (!completed) {
+                document.getElementById('success-title').textContent = 'Payment Received';
+                document.getElementById('success-message').textContent = 'Your payment has been received. Your VIP access is still being prepared. Please keep this terminal open for a moment.';
+            }
         }
 
         async function proceedToPaystack() {
@@ -1265,6 +1318,14 @@
                 const initData = await initRes.json().catch(() => ({}));
                 if (!initRes.ok) throw new Error(initData.detail || 'Could not start payment.');
 
+                try {
+                    localStorage.setItem('jay_pending_payment', JSON.stringify({
+                        reference: initData.reference,
+                        telegram_id: tg.initDataUnsafe?.user?.id || null,
+                        saved_at: Date.now()
+                    }));
+                } catch (e) {}
+
                 // Popup V2 normally handles the access_code. If Telegram's embedded
                 // browser blocks the popup, use Paystack's official authorization URL
                 // returned by the same server-side transaction initialization.
@@ -1284,7 +1345,10 @@
                 payBtn.textContent = 'Waiting for payment...';
                 const completed = await pollPayment(initData.reference, tg.initData);
                 if (!completed) {
-                    tg.showAlert ? tg.showAlert("Payment status is still pending. If payment was completed, access will be delivered automatically.") : alert("Payment status is still pending.");
+                    switchStep('success');
+                    document.getElementById('success-title').textContent = 'Payment Received';
+                    document.getElementById('success-message').textContent = 'Your payment has been received. We are still preparing your VIP access link. Please keep this terminal open for a moment.';
+                    document.getElementById('success-access-wrap').style.display = 'none';
                 }
             } catch (err) {
                 tg.showAlert ? tg.showAlert(err.message || 'Payment error.') : alert(err.message || 'Payment error.');
@@ -1303,6 +1367,10 @@
         document.getElementById('tc-modal').addEventListener('click', function(e) {
             if (e.target === this) this.classList.remove('show');
         });
+
+        // Recover a payment if Paystack returned/reloaded the Mini App after checkout.
+        // This runs after the page has all of its UI functions available.
+        recoverPendingPayment();
     </script>
 </body>
     </html>
