@@ -22,6 +22,7 @@ import ssl
 import certifi
 import hmac
 import hashlib
+import base64
 import httpx
 import secrets
 import string
@@ -82,6 +83,16 @@ def mini_app_launch_url():
         f"backend={quote(RENDER_URL.rstrip('/'), safe='')}"
         f"&v={quote(MINI_APP_VERSION, safe='')}"
     )
+
+def mini_app_payment_return_url(status_token: str) -> str:
+    """Paystack callback target that returns the customer to the Mini App.
+
+    The signed status token lets the frontend recover even if Telegram initData is
+    unavailable after an external checkout redirect.
+    """
+    base = mini_app_launch_url()
+    separator = "&" if "?" in base else "?"
+    return f"{base}{separator}payment_status_token={quote(status_token, safe='')}"
 
 ADMIN_API_KEY = os.getenv("ADMIN_API_KEY", "")
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
@@ -337,6 +348,45 @@ def validate_telegram_init_data(init_data: str) -> dict:
 
     return {"telegram_id": telegram_id, "user": user, "fields": pairs}
 
+
+# ==============================================================================
+# PAYMENT STATUS TOKEN
+# ==============================================================================
+
+PAYMENT_STATUS_SECRET = os.getenv("PAYMENT_STATUS_SECRET", "").strip() or PAYSTACK_SECRET or BOT_TOKEN
+PAYMENT_STATUS_TOKEN_TTL_SECONDS = 30 * 60
+
+def make_payment_status_token(reference: str, telegram_id: int, ttl_seconds: int = PAYMENT_STATUS_TOKEN_TTL_SECONDS) -> str:
+    """Create a short-lived signed token for payment recovery after a checkout redirect.
+
+    This token is only an alternative proof for one payment reference; it never
+    authorizes a different Telegram account and never changes the payment amount.
+    """
+    expires = int(datetime.now(timezone.utc).timestamp()) + ttl_seconds
+    payload = f"{reference}|{int(telegram_id)}|{expires}"
+    signature = hmac.new(PAYMENT_STATUS_SECRET.encode(), payload.encode(), hashlib.sha256).hexdigest()
+    raw = f"{payload}|{signature}".encode()
+    return base64.urlsafe_b64encode(raw).decode().rstrip("=")
+
+def verify_payment_status_token(token: str, reference: str):
+    try:
+        padded = token + "=" * (-len(token) % 4)
+        raw = base64.urlsafe_b64decode(padded.encode()).decode()
+        parts = raw.split("|")
+        if len(parts) != 4:
+            return None
+        token_reference, telegram_id, expires, signature = parts
+        if not hmac.compare_digest(token_reference, reference):
+            return None
+        if int(expires) < int(datetime.now(timezone.utc).timestamp()):
+            return None
+        payload = f"{token_reference}|{int(telegram_id)}|{int(expires)}"
+        expected = hmac.new(PAYMENT_STATUS_SECRET.encode(), payload.encode(), hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(expected, signature):
+            return None
+        return int(telegram_id)
+    except (ValueError, TypeError, UnicodeError, base64.binascii.Error):
+        return None
 
 # ==============================================================================
 # PAYSTACK HELPERS
@@ -916,6 +966,19 @@ def wallet_values(aff):
     return earned, withdrawn, reserved, max(0, earned - withdrawn - reserved)
 
 
+def affiliate_momo_details(aff: dict):
+    """Resolve MoMo data across current and legacy affiliate record shapes."""
+    mm = aff.get("mobile_money_details") or {}
+    if not isinstance(mm, dict):
+        mm = {}
+    number = (
+        mm.get("phone_number") or mm.get("phone") or mm.get("number")
+        or aff.get("manual_payout_details") or aff.get("momo_number")
+        or aff.get("mobile_number") or aff.get("payout_phone")
+    )
+    provider = mm.get("provider_name") or mm.get("provider") or aff.get("momo_provider") or "Mobile Money"
+    return str(provider), str(number) if number else "Not provided"
+
 async def show_affiliate_dashboard(chat_id, bot):
     aff = await get_affiliate(chat_id)
     if aff is None:
@@ -945,9 +1008,7 @@ async def show_affiliate_dashboard(chat_id, bot):
         b = aff.get("bank_details", {})
         payout_detail = f"🏦 {b.get('bank_name','N/A')} • ****{str(b.get('account_number',''))[-4:]}"
     else:
-        m = aff.get("mobile_money_details") or {}
-        phone = m.get("phone_number") or aff.get("manual_payout_details") or "N/A"
-        provider = m.get("provider_name") or "Mobile Money"
+        provider, phone = affiliate_momo_details(aff)
         payout_detail = f"📱 {provider} • {phone}"
 
     affiliate_name = str(aff.get("full_name") or "").strip() or "Affiliate"
@@ -1033,7 +1094,7 @@ async def show_affiliate_referrals(chat_id, bot):
     for ref in refs:
         customer_id = ref.get("customer_telegram_id")
         customer = customers_col.find_one({"telegram_id": customer_id}) if customers_col is not None else None
-        customer_name = customer_display_name(customer)
+        customer_name = customer_display_name(customer) if customer else str(ref.get("customer_name") or "Unknown Telegram User")
         active = bool(users_col and users_col.count_documents({"telegram_id": customer_id, "is_active": True}))
         lp = ref.get("last_payment", {})
         commission = int(lp.get("commission_paid_minor", 0))
@@ -1159,7 +1220,7 @@ async def process_withdrawal_confirmation(chat_id, amount_minor, bot):
         ]])
         await bot.send_message(chat_id=ADMIN_TELEGRAM_ID,
             text=(f"🚨 <b>New Affiliate Withdrawal</b>\n\n"
-                  f"Affiliate: <b>{html.escape(str(aff.get('full_name') or aff.get('username') or f"Telegram {aff.get('telegram_id')}"))}</b> (@{html.escape(str(aff.get('username') or 'N/A'))})\n"
+                  f"Affiliate: <b>{html.escape(str(aff.get('full_name') or aff.get('username') or ('Telegram ' + str(aff.get('telegram_id')))))}</b> (@{html.escape(str(aff.get('username') or 'N/A'))})\n"
                   f"Code: <code>{html.escape(str(aff.get('ref_code','')))}</code>\n"
                   f"Amount: <b>GHS {amount_minor/100:,.2f}</b>\n"
                   f"Method: {html.escape(str(aff.get('payout_method','N/A')).upper())}\n{html.escape(payout_text)}\n\n<b>Action:</b> Send the money manually, then tap <b>MARK AS PAID</b>."),
@@ -1173,12 +1234,7 @@ async def show_payout_info(chat_id, bot):
     if not aff:
         return
     method = "Bank Transfer" if aff.get("payout_method") == "bank" else "Mobile Money"
-    details = (
-        (aff.get("mobile_money_details") or {}).get("phone_number")
-        or aff.get("manual_payout_details")
-        or "Not provided"
-    )
-    provider = (aff.get("mobile_money_details") or {}).get("provider_name") or "Mobile Money"
+    provider, details = affiliate_momo_details(aff)
     affiliate_name = str(aff.get("full_name") or "").strip() or "Name not provided"
     text = (
         f"💳 <b>Payout Details</b>\n\n"
@@ -1456,16 +1512,20 @@ async def api_initiate_payment(payload: InitiatePaymentRequest):
         "created_at": {"$gte": recent_cutoff}
     })
     if recent and recent.get("access_code"):
+        status_token = make_payment_status_token(recent["reference"], telegram_id)
         return {
             "access_code": recent["access_code"],
             "authorization_url": recent.get("authorization_url"),
-            "reference": recent["reference"]
+            "reference": recent["reference"],
+            "status_token": status_token
         }
 
     rate = CURRENCY_RATES[payload.currency]
     amount_minor = int(round(plan["usd"] * rate * 100))
     reference = f"JAY-{secrets.token_hex(8).upper()}"
     email = f"tg_{telegram_id}@jayempire.com"
+    status_token = make_payment_status_token(reference, telegram_id)
+    callback_url = mini_app_payment_return_url(status_token)
 
     # Referral attribution is server-side. The browser cannot choose a referrer.
     lead = leads_col.find_one({"telegram_id": telegram_id}) if leads_col is not None else None
@@ -1520,6 +1580,7 @@ async def api_initiate_payment(payload: InitiatePaymentRequest):
                     "amount": amount_minor,
                     "currency": payload.currency,
                     "reference": reference,
+                    "callback_url": callback_url,
                     "metadata": {
                         "payment_reference": reference,
                         "telegram_id": telegram_id,
@@ -1554,12 +1615,12 @@ async def api_initiate_payment(payload: InitiatePaymentRequest):
         }}
     )
 
-    return {"access_code": access_code, "authorization_url": authorization_url, "reference": reference}
+    return {"access_code": access_code, "authorization_url": authorization_url, "reference": reference, "status_token": status_token}
 
 
 async def retry_payment_access(intent):
     """Finish VIP invite delivery for a paid payment whose invite creation previously failed."""
-    if not intent or intent.get("is_renewal") or intent.get("invite_link"):
+    if not intent or intent.get("invite_link"):
         return intent
     channel_type = intent.get("channel_type", "gold")
     channel_id = GOLD_CHANNEL_ID if channel_type == "gold" else FOREX_CHANNEL_ID
@@ -1601,12 +1662,23 @@ async def retry_payment_access(intent):
     return intent
 
 @app.get("/api/payment-status")
-async def api_payment_status(reference: str, x_telegram_init_data: Optional[str] = Header(None)):
-    tg = validate_telegram_init_data(x_telegram_init_data or "")
+async def api_payment_status(
+    reference: str,
+    x_telegram_init_data: Optional[str] = Header(None),
+    x_payment_status_token: Optional[str] = Header(None),
+    payment_status_token: Optional[str] = None,
+):
+    telegram_id = None
+    token = x_payment_status_token or payment_status_token
+    if token:
+        telegram_id = verify_payment_status_token(token, reference)
+    if telegram_id is None:
+        tg = validate_telegram_init_data(x_telegram_init_data or "")
+        telegram_id = tg["telegram_id"]
     if payment_intents_col is None:
         raise HTTPException(status_code=503, detail="Service temporarily unavailable")
     intent = payment_intents_col.find_one(
-        {"reference": reference, "telegram_id": tg["telegram_id"]},
+        {"reference": reference, "telegram_id": telegram_id},
         {"_id": 0, "status": 1, "reference": 1, "fulfilled_at": 1,
          "invite_link": 1, "invite_link_expires_at": 1, "channel_type": 1,
          "plan_key": 1, "plan_name": 1, "days": 1, "is_renewal": 1}
@@ -1961,7 +2033,7 @@ async def paystack_webhook(request: Request, x_paystack_signature: str = Header(
                             "🆕 <b>New Referred Signup</b>\n\n"
                             f"Customer Name: <b>{html.escape(customer_display_name(customer_record))}</b>\n"
                             f"Customer ID: <code>{tg_id}</code>\n"
-                            f"Affiliate: <b>{html.escape(str((affiliate or {}).get('full_name','N/A')))}</b>\n"
+                            f"Affiliate: <b>{html.escape(str((affiliate or {}).get('full_name') or (affiliate or {}).get('username') or 'Unknown Affiliate'))}</b>\n"
                             f"Referral Code: <code>{html.escape(str(ref_code))}</code>\n"
                             f"Channel: {html.escape(channel_type.upper())}\n"
                             f"Plan: {html.escape(str(intent.get('plan_key','N/A')))}\n"
@@ -2134,8 +2206,8 @@ async def admin_affiliates_detailed(_: bool = Depends(verify_admin)):
             "created_at": aff.get("created_at").isoformat() if aff.get("created_at") else None,
             "payout_details": (
                 aff.get("bank_details") if aff.get("payout_method") == "bank" else {
-                    "provider_name": (aff.get("mobile_money_details") or {}).get("provider_name", "Mobile Money"),
-                    "phone_number": (aff.get("mobile_money_details") or {}).get("phone_number") or aff.get("manual_payout_details", ""),
+                    "provider_name": affiliate_momo_details(aff)[0],
+                    "phone_number": affiliate_momo_details(aff)[1],
                 }
             )
         }
