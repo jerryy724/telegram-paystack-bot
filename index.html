@@ -1198,12 +1198,11 @@
             switchStep('success');
         }
 
-        async function pollPayment(reference, initData) {
-            if (!reference || !initData) return false;
+        let paymentMonitorPromise = null;
+        let paymentMonitorReference = null;
 
-            // Keep the payment reference across Paystack/Telegram WebView redirects.
-            // If the checkout reloads this page after payment, recovery can continue
-            // from the same reference instead of returning the customer to checkout.
+        function savePendingPayment(reference) {
+            if (!reference) return;
             try {
                 localStorage.setItem('jay_pending_payment', JSON.stringify({
                     reference: reference,
@@ -1211,12 +1210,24 @@
                     saved_at: Date.now()
                 }));
             } catch (e) {}
+        }
+
+        async function pollPayment(reference, initData) {
+            if (!reference || !initData) return false;
+
+            savePendingPayment(reference);
 
             for (let attempt = 0; attempt < 180; attempt++) {
-                await new Promise(resolve => setTimeout(resolve, 2000));
+                // Check immediately, then every 2 seconds. This removes the old
+                // blind delay and makes the post-payment screen appear as soon as
+                // the webhook has fulfilled the payment.
+                if (attempt > 0) {
+                    await new Promise(resolve => setTimeout(resolve, 2000));
+                }
                 try {
                     const res = await fetch(`${BACKEND_URL}/api/payment-status?reference=${encodeURIComponent(reference)}`, {
-                        headers: { 'X-Telegram-Init-Data': initData }
+                        headers: { 'X-Telegram-Init-Data': initData },
+                        cache: 'no-store'
                     });
                     if (!res.ok) continue;
                     const data = await res.json();
@@ -1226,7 +1237,6 @@
                         return true;
                     }
                     if (data.status === 'access_pending') {
-                        // The backend will retry invite generation on the next poll.
                         continue;
                     }
                     if (data.status === 'failed') {
@@ -1240,26 +1250,34 @@
             return false;
         }
 
+        function startPaymentMonitor(reference) {
+            if (!reference || !tg.initData) return null;
+            savePendingPayment(reference);
+            if (paymentMonitorPromise && paymentMonitorReference === reference) {
+                return paymentMonitorPromise;
+            }
+            paymentMonitorReference = reference;
+            paymentMonitorPromise = pollPayment(reference, tg.initData).finally(() => {
+                paymentMonitorPromise = null;
+                paymentMonitorReference = null;
+            });
+            return paymentMonitorPromise;
+        }
+
         async function recoverPendingPayment() {
             if (!tg.initData) return;
 
-            let reference = new URLSearchParams(window.location.search).get('reference')
-                || new URLSearchParams(window.location.search).get('trxref')
-                || new URLSearchParams(window.location.search).get('payment_ref');
+            const params = new URLSearchParams(window.location.search);
+            let reference = params.get('reference') || params.get('trxref') || params.get('payment_ref');
 
             if (reference) {
-                try {
-                    localStorage.setItem('jay_pending_payment', JSON.stringify({
-                        reference: reference,
-                        telegram_id: tg.initDataUnsafe?.user?.id || null,
-                        saved_at: Date.now()
-                    }));
-                } catch (e) {}
+                savePendingPayment(reference);
             } else {
                 try {
                     const saved = JSON.parse(localStorage.getItem('jay_pending_payment') || 'null');
-                    if (saved && saved.telegram_id === (tg.initDataUnsafe?.user?.id || null) &&
-                        Date.now() - Number(saved.saved_at || 0) < 30 * 60 * 1000) {
+                    if (saved && saved.reference &&
+                        Date.now() - Number(saved.saved_at || 0) < 30 * 60 * 1000 &&
+                        (saved.telegram_id === null || saved.telegram_id === (tg.initDataUnsafe?.user?.id || null))) {
                         reference = saved.reference;
                     }
                 } catch (e) {}
@@ -1267,14 +1285,15 @@
 
             if (!reference) return;
 
-            // Show a clean confirmation state while the webhook/access preparation
-            // finishes. Do not send the customer back through Terms & Conditions.
+            // A returned/reloaded Mini App must never restart at Terms & Conditions
+            // when there is a recent payment reference. Go straight to the success
+            // state and let the server decide when the access button is safe to show.
             switchStep('success');
             document.getElementById('success-title').textContent = 'Confirming Payment…';
             document.getElementById('success-message').textContent = 'Your payment was completed. We are confirming your VIP access and preparing your private link.';
             document.getElementById('success-access-wrap').style.display = 'none';
 
-            const completed = await pollPayment(reference, tg.initData);
+            const completed = await startPaymentMonitor(reference);
             if (!completed) {
                 document.getElementById('success-title').textContent = 'Payment Received';
                 document.getElementById('success-message').textContent = 'Your payment has been received. Your VIP access is still being prepared. Please keep this terminal open for a moment.';
@@ -1318,32 +1337,47 @@
                 const initData = await initRes.json().catch(() => ({}));
                 if (!initRes.ok) throw new Error(initData.detail || 'Could not start payment.');
 
-                try {
-                    localStorage.setItem('jay_pending_payment', JSON.stringify({
-                        reference: initData.reference,
-                        telegram_id: tg.initDataUnsafe?.user?.id || null,
-                        saved_at: Date.now()
-                    }));
-                } catch (e) {}
+                savePendingPayment(initData.reference);
 
-                // Popup V2 normally handles the access_code. If Telegram's embedded
-                // browser blocks the popup, use Paystack's official authorization URL
-                // returned by the same server-side transaction initialization.
-                if (window.PaystackPop && typeof PaystackPop === 'function') {
-                    const popup = new PaystackPop();
-                    popup.resumeTransaction(initData.access_code);
-                } else if (initData.authorization_url) {
-                    if (tg.openLink) {
-                        tg.openLink(initData.authorization_url);
-                    } else {
-                        window.location.href = initData.authorization_url;
-                    }
-                } else {
-                    throw new Error('Paystack checkout could not be loaded. Please try again.');
+                // IMPORTANT: keep the checkout inside Paystack Popup V2. The old
+                // authorization_url/window.location fallback could navigate the
+                // Telegram Mini App away from this page, destroy its in-memory state,
+                // and return the customer to the initial Terms screen.
+                if (!window.PaystackPop || typeof PaystackPop !== 'function') {
+                    throw new Error('Paystack checkout could not be loaded. Please reopen the VIP Terminal and try again.');
                 }
 
+                const popup = new PaystackPop();
+                popup.resumeTransaction(initData.access_code, {
+                    onSuccess: function(transaction) {
+                        // Paystack's client callback only starts the post-payment UI;
+                        // the backend/webhook still decides when the access button can
+                        // be shown. This is deliberately not trusted as proof of payment.
+                        const reference = transaction?.reference || initData.reference;
+                        savePendingPayment(reference);
+                        switchStep('success');
+                        document.getElementById('success-title').textContent = 'Payment Approved';
+                        document.getElementById('success-message').textContent = 'Your payment was approved. We are confirming your VIP access and preparing your private link.';
+                        document.getElementById('success-access-wrap').style.display = 'none';
+                        startPaymentMonitor(reference);
+                    },
+                    onCancel: function() {
+                        // Do not clear the pending reference here: a payment can finish
+                        // in another browser/payment flow immediately before the popup
+                        // closes. Recovery will check the reference on the next open.
+                        payBtn.disabled = false;
+                        payBtn.textContent = originalLabel;
+                    },
+                    onError: function(error) {
+                        console.error('Paystack checkout error:', error);
+                        payBtn.disabled = false;
+                        payBtn.textContent = originalLabel;
+                        tg.showAlert ? tg.showAlert('Payment error: ' + (error?.message || 'Please try again.')) : alert('Payment error.');
+                    }
+                });
+
                 payBtn.textContent = 'Waiting for payment...';
-                const completed = await pollPayment(initData.reference, tg.initData);
+                const completed = await startPaymentMonitor(initData.reference);
                 if (!completed) {
                     switchStep('success');
                     document.getElementById('success-title').textContent = 'Payment Received';
