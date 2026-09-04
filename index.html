@@ -1204,16 +1204,22 @@
             payBtn.textContent = 'Processing...';
 
             try {
-                const initRes = await fetch(`${BACKEND_URL}/api/initiate-payment`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        init_data: tg.initData,
-                        channel_type: targetChannel,
-                        plan_key: selectedPlan.key,
-                        currency: activeCurrency
-                    })
-                });
+                let initRes;
+                try {
+                    initRes = await fetch(`${BACKEND_URL}/api/initiate-payment`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            init_data: tg.initData,
+                            channel_type: targetChannel,
+                            plan_key: selectedPlan.key,
+                            currency: activeCurrency
+                        })
+                    });
+                } catch (networkError) {
+                    console.error('Payment server connection failed:', networkError);
+                    throw new Error('The payment server could not be reached. Please try again in a few seconds.');
+                }
                 const initData = await initRes.json();
                 if (!initRes.ok) throw new Error(initData.detail || 'Could not start payment.');
 
