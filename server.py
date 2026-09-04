@@ -213,6 +213,31 @@ def init_mongodb():
             {"$set": {"is_active": True}}
         )
 
+        # Older affiliate records stored the MoMo number only in
+        # manual_payout_details. Backfill the structured field used by the
+        # dashboard and payout-info view so existing affiliates keep their
+        # payout number after an upgrade.
+        for aff in affiliates_col.find(
+            {
+                "payout_method": "momo",
+                "manual_payout_details": {"$exists": True},
+                "$or": [
+                    {"mobile_money_details": {"$exists": False}},
+                    {"mobile_money_details.phone_number": {"$exists": False}},
+                ],
+            },
+            {"_id": 1, "manual_payout_details": 1, "mobile_money_details": 1}
+        ):
+            number = str(aff.get("manual_payout_details") or "").strip()
+            if number:
+                affiliates_col.update_one(
+                    {"_id": aff["_id"]},
+                    {"$set": {"mobile_money_details": {
+                        "provider_name": "Mobile Money",
+                        "phone_number": number,
+                    }}}
+                )
+
         return client, db, users_col, leads_col, affiliates_col, referrals_col, withdrawals_col, transactions_col, webhook_events_col, payment_intents_col, customers_col
 
     except Exception as e:
@@ -663,6 +688,10 @@ async def handle_affiliate_callback(chat_id, action, username=""):
             "is_active": True,
             "milestone_notified": False,
             "manual_payout_details": momo_number,
+            "mobile_money_details": {
+                "provider_name": "Mobile Money",
+                "phone_number": momo_number,
+            },
             "created_at": datetime.utcnow(),
         }
 
@@ -876,8 +905,10 @@ async def show_affiliate_dashboard(chat_id, bot):
         b = aff.get("bank_details", {})
         payout_detail = f"🏦 {b.get('bank_name','N/A')} • ****{str(b.get('account_number',''))[-4:]}"
     else:
-        m = aff.get("mobile_money_details", {})
-        payout_detail = f"📱 {m.get('provider_name','N/A')} • {m.get('phone_number','N/A')}"
+        m = aff.get("mobile_money_details") or {}
+        phone = m.get("phone_number") or aff.get("manual_payout_details") or "N/A"
+        provider = m.get("provider_name") or "Mobile Money"
+        payout_detail = f"📱 {provider} • {phone}"
 
     dashboard = (
         "💎 <b>JAY EMPIRE AFFILIATE DASHBOARD</b>\n\n"
@@ -1097,7 +1128,11 @@ async def show_payout_info(chat_id, bot):
     if not aff:
         return
     method = "Bank Transfer" if aff.get("payout_method") == "bank" else "Mobile Money"
-    details = aff.get("manual_payout_details", "Not provided")
+    details = (
+        (aff.get("mobile_money_details") or {}).get("phone_number")
+        or aff.get("manual_payout_details")
+        or "Not provided"
+    )
     text = (
         f"💳 <b>Payout Details</b>\n\n"
         f"Method: {html.escape(method)}\n"
@@ -1486,12 +1521,31 @@ async def retry_payment_access(intent):
             payment_intents_col.update_one(
                 {"reference": intent["reference"], "status": "access_pending"},
                 {"$set": {"invite_link": invite_link, "invite_link_expires_at": expires_at,
-                          "status": "fulfilled", "fulfilled_at": datetime.utcnow()},
+                          "status": "fulfilled", "fulfilled_at": datetime.utcnow(), "access_ready": True},
                  "$unset": {"access_error": ""}}
             )
             intent["invite_link"] = invite_link
             intent["invite_link_expires_at"] = expires_at
             intent["status"] = "fulfilled"
+            # Also deliver the same access link in Telegram if the original webhook
+            # could not complete the delivery. The Mini App remains the primary UI.
+            try:
+                bot = Bot(token=BOT_TOKEN)
+                channel_type = intent.get("channel_type", "gold")
+                name = "JAY GOLD MASTER VIP" if channel_type == "gold" else "JAY FX PREMIUM SIGNALS"
+                await bot.send_message(
+                    chat_id=intent["telegram_id"],
+                    text=(
+                        "🎉 <b>CONGRATULATIONS!</b>\n\n"
+                        "✅ <b>Payment Confirmed</b>\n\n"
+                        f"Your <b>{html.escape(name)}</b> subscription is active.\n\n"
+                        "Your VIP access link is ready. It can be used once and expires in <b>5 minutes</b>."
+                    ),
+                    parse_mode="HTML",
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(f"🔐 Access {name}", url=invite_link)]])
+                )
+            except Exception as e:
+                logger.warning("Could not send recovered VIP invite message: %s", e)
             return intent
     except Exception as e:
         logger.exception("Payment access retry failed for %s: %s", intent.get("reference"), e)
@@ -1873,81 +1927,78 @@ async def paystack_webhook(request: Request, x_paystack_signature: str = Header(
             invite_link = intent.get("invite_link")
             invite_expires_at = intent.get("invite_link_expires_at")
             try:
-                if is_renewal:
-                    await bot.send_message(
-                        chat_id=tg_id,
-                        text=f"✅ PAYMENT VERIFIED!\n\nPlan: {channel_type.upper()}\nExpires: {'Lifetime' if expires is None else expires.strftime('%B %d, %Y')}\n\nYou're already in {name} — no action needed.",
-                        parse_mode="HTML",
+                # Every successful payment receives a fresh one-time invite, including
+                # renewals. This gives the Mini App a concrete access link to display.
+                if not invite_link:
+                    invite_link = await generate_single_use_invite(channel_id)
+                if invite_link:
+                    invite_expires_at = now + timedelta(minutes=5)
+                    payment_intents_col.update_one(
+                        {"reference": reference},
+                        {"$set": {"invite_link": invite_link, "invite_link_expires_at": invite_expires_at}}
                     )
-                else:
-                    if not invite_link:
-                        invite_link = await generate_single_use_invite(channel_id)
-                    if invite_link:
-                        invite_expires_at = now + timedelta(minutes=5)
-                        payment_intents_col.update_one(
-                            {"reference": reference},
+                    if users_col is not None:
+                        users_col.update_one(
+                            {"telegram_id": tg_id, "channel_type": channel_type},
                             {"$set": {"invite_link": invite_link, "invite_link_expires_at": invite_expires_at}}
                         )
-                        if users_col is not None:
-                            users_col.update_one(
-                                {"telegram_id": tg_id, "channel_type": channel_type},
-                                {"$set": {"invite_link": invite_link, "invite_link_expires_at": invite_expires_at}}
+                    btn = InlineKeyboardMarkup([[InlineKeyboardButton(f"🔐 Access {name}", url=invite_link)]])
+                    await bot.send_message(
+                        chat_id=tg_id,
+                        text=(
+                            "🎉 <b>CONGRATULATIONS!</b>\n\n"
+                            "✅ <b>Payment Confirmed</b>\n\n"
+                            f"Your <b>{html.escape(name)}</b> subscription is now active.\n"
+                            f"Plan: <b>{html.escape(str(intent.get('plan_name', 'VIP Access')))}</b>\n"
+                            f"Access: <b>{'Lifetime' if expires is None else expires.strftime('%B %d, %Y')}</b>\n\n"
+                            "Your private VIP access link is ready. It can be used once and expires in <b>5 minutes</b>.\n\n"
+                            "Tap the button below to enter your VIP channel now."
+                        ),
+                        parse_mode="HTML",
+                        reply_markup=btn
+                    )
+                else:
+                    await bot.send_message(
+                        chat_id=tg_id,
+                        text=(
+                            "✅ <b>Payment Confirmed</b>\n\n"
+                            "Your payment was received, but your private VIP access link is still being prepared.\n\n"
+                            f"Payment Reference: <code>{html.escape(str(reference))}</code>\n"
+                            f"Please contact @{ADMIN_USERNAME} if access is not ready shortly."
+                        ),
+                        parse_mode="HTML",
+                    )
+                    if ADMIN_TELEGRAM_ID:
+                        try:
+                            await bot.send_message(
+                                chat_id=ADMIN_TELEGRAM_ID,
+                                text=(
+                                    "⚠️ <b>VIP Invite Link Generation Failed</b>\n\n"
+                                    f"Customer ID: <code>{tg_id}</code>\n"
+                                    f"Channel: {html.escape(channel_type.upper())}\n"
+                                    f"Payment Ref: <code>{html.escape(str(reference))}</code>\n\n"
+                                    "Check that the bot is an administrator of the VIP channel with permission to create invite links."
+                                ),
+                                parse_mode="HTML"
                             )
-                        btn = InlineKeyboardMarkup([[InlineKeyboardButton(f"Enter {name}", url=invite_link)]])
-                        await bot.send_message(
-                            chat_id=tg_id,
-                            text=(
-                                "✅ <b>PAYMENT VERIFIED!</b>\n\n"
-                                f"Plan: {channel_type.upper()}\n"
-                                f"Access: {'Lifetime' if expires is None else expires.strftime('%B %d, %Y')}\n\n"
-                                "Your private channel invite link expires in <b>5 minutes</b> and can be used <b>once</b>.\n\n"
-                                "Tap the button below to join now."
-                            ),
-                            parse_mode="HTML",
-                            reply_markup=btn
-                        )
-                    else:
-                        await bot.send_message(
-                            chat_id=tg_id,
-                            text=(
-                                "✅ <b>Payment Verified</b>\n\n"
-                                "Your payment was received, but the private channel invite could not be generated automatically.\n\n"
-                                f"Payment Reference: <code>{html.escape(str(reference))}</code>\n"
-                                f"Please contact @{ADMIN_USERNAME}."
-                            ),
-                            parse_mode="HTML",
-                        )
-                        if ADMIN_TELEGRAM_ID:
-                            try:
-                                await bot.send_message(
-                                    chat_id=ADMIN_TELEGRAM_ID,
-                                    text=(
-                                        "⚠️ <b>Invite Link Generation Failed</b>\n\n"
-                                        f"Customer ID: <code>{tg_id}</code>\n"
-                                        f"Channel: {html.escape(channel_type.upper())}\n"
-                                        f"Payment Ref: <code>{html.escape(str(reference))}</code>\n\n"
-                                        "Check that the bot is an administrator of the VIP channel with permission to invite users by link."
-                                    ),
-                                    parse_mode="HTML"
-                                )
-                            except Exception as e:
-                                logger.error("Failed to notify admin about invite failure: %s", e)
+                        except Exception as e:
+                            logger.error("Failed to notify admin about invite failure: %s", e)
 
-                if is_renewal or invite_link:
+                if invite_link:
                     payment_intents_col.update_one(
                         {"reference": reference, "status": "processing"},
-                        {"$set": {"status": "fulfilled", "fulfilled_at": now}}
+                        {"$set": {"status": "fulfilled", "fulfilled_at": now, "access_ready": True}}
                     )
                 else:
                     payment_intents_col.update_one(
                         {"reference": reference, "status": "processing"},
-                        {"$set": {"status": "access_pending", "access_error": "Invite link generation failed"}}
+                        {"$set": {"status": "access_pending", "access_error": "Invite link generation failed", "access_ready": False}}
                     )
             except Exception as e:
                 logger.error(f"Access message failed: {e}")
                 payment_intents_col.update_one(
                     {"reference": reference, "status": "processing"},
-                    {"$set": {"status": "access_pending", "access_error": str(e)[:500]}}
+                    {"$set": {"status": "access_pending", "access_error": str(e)[:500], "access_ready": False}}
                 )
 
         return {"status": "success"}
@@ -2028,7 +2079,12 @@ async def admin_affiliates_detailed(_: bool = Depends(verify_admin)):
             "total_referrals": aff.get("total_referrals", 0),
             "is_active": aff.get("is_active"),
             "created_at": aff.get("created_at").isoformat() if aff.get("created_at") else None,
-            "payout_details": aff.get("bank_details") if aff.get("payout_method") == "bank" else aff.get("mobile_money_details")
+            "payout_details": (
+                aff.get("bank_details") if aff.get("payout_method") == "bank" else {
+                    "provider_name": (aff.get("mobile_money_details") or {}).get("provider_name", "Mobile Money"),
+                    "phone_number": (aff.get("mobile_money_details") or {}).get("phone_number") or aff.get("manual_payout_details", ""),
+                }
+            )
         }
         detailed.append(aff_data)
 
