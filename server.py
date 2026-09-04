@@ -38,8 +38,9 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from pymongo import MongoClient, ASCENDING, DESCENDING, ReturnDocument
 from pymongo.errors import DuplicateKeyError
+from bson import ObjectId
 from pymongo.server_api import ServerApi
-from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo, Update
+from telegram import Bot, BotCommand, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo, Update
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler
 
 # ==============================================================================
@@ -204,6 +205,14 @@ def init_mongodb():
                 }}
             )
 
+        # Legacy affiliate records from earlier versions did not always contain
+        # is_active. Treat those records as active so an existing affiliate is not
+        # simultaneously told that the account exists and that it is inactive.
+        affiliates_col.update_many(
+            {"is_active": {"$exists": False}, "$or": [{"active": True}, {"active": {"$exists": False}}]},
+            {"$set": {"is_active": True}}
+        )
+
         return client, db, users_col, leads_col, affiliates_col, referrals_col, withdrawals_col, transactions_col, webhook_events_col, payment_intents_col, customers_col
 
     except Exception as e:
@@ -364,13 +373,12 @@ async def start_cmd(update: Update, context):
 
     if payload.lower().startswith("ref_"):
         referral_payload_present = True
-        candidate = payload[4:].strip().upper()
-        if re.fullmatch(r"JAY[A-Z0-9]{7}", candidate) and affiliates_col is not None:
-            affiliate_for_link = affiliates_col.find_one({"ref_code": candidate, "is_active": True})
-            if affiliate_for_link and int(affiliate_for_link.get("telegram_id", 0)) != int(chat_id):
-                ref_code = candidate
-            else:
-                logger.warning("Invalid/inactive/self referral payload %s for Telegram ID %s", candidate, chat_id)
+        candidate = payload[4:].strip()
+        affiliate_for_link = find_affiliate_by_ref_code(candidate)
+        if affiliate_for_link and int(affiliate_for_link.get("telegram_id", 0)) != int(chat_id):
+            ref_code = str(affiliate_for_link.get("ref_code"))
+        else:
+            logger.warning("Invalid/inactive/self referral payload %s for Telegram ID %s", candidate, chat_id)
 
     logger.info("/start from %s (@%s), referral=%s", chat_id, username, ref_code or "none")
 
@@ -415,7 +423,7 @@ async def start_cmd(update: Update, context):
         except Exception as e:
             logger.exception("Customer logging error: %s", e)
 
-    is_affiliate = affiliates_col.find_one({"telegram_id": chat_id, "is_active": True}) if affiliates_col is not None else None
+    is_affiliate = find_affiliate_by_telegram_id(chat_id)
 
     # Any /start referral payload is a referral landing flow: ONLY Subscribe is shown.
     # A valid code is stored server-side; an invalid code is never silently converted
@@ -445,9 +453,13 @@ async def start_cmd(update: Update, context):
             kb.append([InlineKeyboardButton("📊 My Affiliate Dashboard", callback_data="affiliate_dashboard")])
 
         welcome_text = (
-            "👑 <b>JAY EMPIRE VIP TERMINAL</b>\n"
-            "<i>Success Is Our Aim</i>\n\n"
-            "📈 <b>Subscribe</b> — access premium Gold &amp; FX signals and private member updates.\n\n"
+            "👑 <b>WELCOME TO JAY TRADING HUB VIP SECTION</b>\n\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
+            "📈 <b>Subscribe</b>\n\n"
+            "Access premium Gold &amp; FX signals and private member updates.\n\n"
+            "🤝 <b>Become an Affiliate</b>\n\n"
+            "Join the affiliate program, share your unique referral link and earn eligible commissions.\n\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
             "Choose an option below to get started."
         )
 
@@ -532,6 +544,37 @@ telegram_app.add_handler(CallbackQueryHandler(callback_handler))
 # ==============================================================================
 # AFFILIATE CALLBACK HANDLERS
 # ==============================================================================
+def affiliate_record_is_active(aff):
+    """Backward-compatible active flag for legacy affiliate records."""
+    if not aff:
+        return False
+    if "is_active" in aff:
+        return aff.get("is_active") is not False
+    if "active" in aff:
+        return bool(aff.get("active"))
+    return True
+
+def find_affiliate_by_telegram_id(chat_id):
+    if affiliates_col is None:
+        return None
+    aff = affiliates_col.find_one({"telegram_id": int(chat_id)})
+    if aff and aff.get("is_active") is not True and aff.get("active") is True:
+        affiliates_col.update_one({"_id": aff["_id"]}, {"$set": {"is_active": True}})
+        aff["is_active"] = True
+    return aff if affiliate_record_is_active(aff) else None
+
+def find_affiliate_by_ref_code(ref_code):
+    if affiliates_col is None or not ref_code:
+        return None
+    raw = str(ref_code).strip()
+    for candidate in (raw, raw.upper()):
+        aff = affiliates_col.find_one({"ref_code": candidate})
+        if aff and affiliate_record_is_active(aff):
+            return aff
+    return None
+
+# AFFILIATE CALLBACK HANDLERS
+# ==============================================================================
 
 async def show_affiliate_confirmation(chat_id, bot):
     state = get_affiliate_onboarding(chat_id)
@@ -573,10 +616,15 @@ async def handle_affiliate_callback(chat_id, action, username=""):
             return
 
         existing = affiliates_col.find_one({"telegram_id": chat_id})
-        if existing and existing.get("is_active", True):
-            ref_link = f"https://t.me/{BOT_USERNAME}?start=ref_{existing['ref_code']}"
-            clear_affiliate_onboarding(chat_id)
-            await bot.send_message(chat_id=chat_id, text=f"You already have an affiliate account.\n\nYour referral link:\n{ref_link}")
+        if existing:
+            if not affiliate_record_is_active(existing):
+                await bot.send_message(chat_id=chat_id, text="Your affiliate account exists but is currently inactive. Please contact admin to reactivate it.")
+            else:
+                if existing.get("is_active") is not True:
+                    affiliates_col.update_one({"_id": existing["_id"]}, {"$set": {"is_active": True}})
+                ref_link = f"https://t.me/{BOT_USERNAME}?start=ref_{existing['ref_code']}"
+                clear_affiliate_onboarding(chat_id)
+                await bot.send_message(chat_id=chat_id, text=f"You already have an affiliate account.\n\nYour referral link:\n{ref_link}")
             return
 
         d = state.get("data") or {}
@@ -777,7 +825,7 @@ async def handle_affiliate_callback(chat_id, action, username=""):
 async def show_main_menu(chat_id, bot):
     is_aff = None
     if affiliates_col is not None:
-        is_aff = affiliates_col.find_one({"telegram_id": chat_id, "is_active": True})
+        is_aff = find_affiliate_by_telegram_id(chat_id)
     kb = [[InlineKeyboardButton("📈 Subscribe", web_app=WebAppInfo(url=mini_app_launch_url()))]]
     if is_aff is None:
         kb.append([InlineKeyboardButton("🤝 Become an Affiliate", callback_data="affiliate_start")])
@@ -788,7 +836,7 @@ async def show_main_menu(chat_id, bot):
 async def get_affiliate(chat_id):
     if affiliates_col is None:
         return None
-    return affiliates_col.find_one({"telegram_id": chat_id, "is_active": True})
+    return find_affiliate_by_telegram_id(chat_id)
 
 
 def wallet_values(aff):
@@ -1069,7 +1117,7 @@ async def generate_single_use_invite(channel_id: str):
         link = await bot.create_chat_invite_link(
             chat_id=channel_id,
             member_limit=1,
-            expire_date=datetime.utcnow() + timedelta(minutes=5),
+            expire_date=datetime.now(timezone.utc) + timedelta(minutes=5),
             name=f"paid-{secrets.token_hex(4)}"
         )
         return link.invite_link
@@ -1207,6 +1255,15 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("Could not resolve bot username from Telegram: %s", e)
 
+    try:
+        await telegram_app.bot.set_my_commands([
+            BotCommand("start", "Open the JAY Trading Hub VIP section"),
+            BotCommand("affiliate", "Open your affiliate dashboard"),
+        ])
+        logger.info("Telegram command menu configured")
+    except Exception as e:
+        logger.warning("Could not configure Telegram command menu: %s", e)
+
     webhook_target = f"{RENDER_URL.rstrip('/')}/telegram-webhook"
     bot = Bot(token=BOT_TOKEN)
     if TELEGRAM_WEBHOOK_SECRET:
@@ -1332,7 +1389,7 @@ async def api_initiate_payment(payload: InitiatePaymentRequest):
     ref_code = (customer or {}).get("referred_by") or (lead or {}).get("referred_by")
     affiliate = None
     if ref_code and affiliates_col is not None:
-        affiliate = affiliates_col.find_one({"ref_code": ref_code, "is_active": True})
+        affiliate = find_affiliate_by_ref_code(ref_code)
         if affiliate and affiliate.get("telegram_id") == telegram_id:
             affiliate = None
             ref_code = None
@@ -1345,6 +1402,7 @@ async def api_initiate_payment(payload: InitiatePaymentRequest):
         "telegram_id": telegram_id,
         "channel_type": payload.channel_type,
         "plan_key": plan["key"],
+        "plan_name": plan["name"],
         "days": plan["days"],
         "is_test": bool(plan.get("is_test")),
         "is_renewal": is_renewal,
@@ -1415,6 +1473,30 @@ async def api_initiate_payment(payload: InitiatePaymentRequest):
     return {"access_code": access_code, "authorization_url": authorization_url, "reference": reference}
 
 
+async def retry_payment_access(intent):
+    """Finish VIP invite delivery for a paid payment whose invite creation previously failed."""
+    if not intent or intent.get("is_renewal") or intent.get("invite_link"):
+        return intent
+    channel_type = intent.get("channel_type", "gold")
+    channel_id = GOLD_CHANNEL_ID if channel_type == "gold" else FOREX_CHANNEL_ID
+    try:
+        invite_link = await generate_single_use_invite(channel_id)
+        if invite_link:
+            expires_at = datetime.utcnow() + timedelta(minutes=5)
+            payment_intents_col.update_one(
+                {"reference": intent["reference"], "status": "access_pending"},
+                {"$set": {"invite_link": invite_link, "invite_link_expires_at": expires_at,
+                          "status": "fulfilled", "fulfilled_at": datetime.utcnow()},
+                 "$unset": {"access_error": ""}}
+            )
+            intent["invite_link"] = invite_link
+            intent["invite_link_expires_at"] = expires_at
+            intent["status"] = "fulfilled"
+            return intent
+    except Exception as e:
+        logger.exception("Payment access retry failed for %s: %s", intent.get("reference"), e)
+    return intent
+
 @app.get("/api/payment-status")
 async def api_payment_status(reference: str, x_telegram_init_data: Optional[str] = Header(None)):
     tg = validate_telegram_init_data(x_telegram_init_data or "")
@@ -1422,13 +1504,24 @@ async def api_payment_status(reference: str, x_telegram_init_data: Optional[str]
         raise HTTPException(status_code=503, detail="Service temporarily unavailable")
     intent = payment_intents_col.find_one(
         {"reference": reference, "telegram_id": tg["telegram_id"]},
-        {"_id": 0, "status": 1, "reference": 1, "fulfilled_at": 1}
+        {"_id": 0, "status": 1, "reference": 1, "fulfilled_at": 1,
+         "invite_link": 1, "invite_link_expires_at": 1, "channel_type": 1,
+         "plan_key": 1, "plan_name": 1, "days": 1, "is_renewal": 1}
     )
     if not intent:
         raise HTTPException(status_code=404, detail="Payment not found")
+    if intent.get("status") == "access_pending":
+        intent = await retry_payment_access(intent)
     return {
         "status": intent.get("status", "pending"),
         "reference": intent["reference"],
+        "invite_link": intent.get("invite_link"),
+        "invite_link_expires_at": intent.get("invite_link_expires_at").isoformat() if intent.get("invite_link_expires_at") else None,
+        "channel_type": intent.get("channel_type"),
+        "plan_key": intent.get("plan_key"),
+        "plan_name": intent.get("plan_name"),
+        "days": intent.get("days"),
+        "is_renewal": bool(intent.get("is_renewal", False)),
     }
 
 # ==============================================================================
@@ -1578,6 +1671,7 @@ async def paystack_webhook(request: Request, x_paystack_signature: str = Header(
             days = int(intent.get("days") or 0)
             ref_code = intent.get("ref_code")
             is_test = bool(intent.get("is_test", False))
+            payment_amount_minor = int(data.get("amount", 0))
             customer_record = customers_col.find_one({"telegram_id": tg_id}) if customers_col is not None else None
             # Recompute renewal status from the server-side customer history.
             # Metadata sent by a browser is never trusted for commission tiering.
@@ -1633,7 +1727,7 @@ async def paystack_webhook(request: Request, x_paystack_signature: str = Header(
                     )
 
                 if (not is_test) and ref_code and affiliates_col is not None and referrals_col is not None:
-                    affiliate = affiliates_col.find_one({"ref_code": ref_code, "is_active": True})
+                    affiliate = find_affiliate_by_ref_code(ref_code)
                     if affiliate is not None and affiliate["telegram_id"] == tg_id:
                         logger.warning(f"Self-referral blocked: affiliate {ref_code} tried to refer themselves ({tg_id}).")
                     elif affiliate is not None:
@@ -1764,7 +1858,7 @@ async def paystack_webhook(request: Request, x_paystack_signature: str = Header(
                             f"Referral Code: <code>{html.escape(str(ref_code))}</code>\n"
                             f"Channel: {html.escape(channel_type.upper())}\n"
                             f"Plan: {html.escape(str(intent.get('plan_key','N/A')))}\n"
-                            f"Amount: <b>{amount/100:,.2f} {html.escape(str(data.get('currency','GHS')))}</b>\n"
+                            f"Amount: <b>{payment_amount_minor/100:,.2f} {html.escape(str(data.get('currency','GHS')))}</b>\n"
                             f"Paystack Ref: <code>{html.escape(str(reference))}</code>\n\n"
                             "Payment was received by the merchant account. Affiliate commission is recorded internally."
                         ),
@@ -1773,14 +1867,11 @@ async def paystack_webhook(request: Request, x_paystack_signature: str = Header(
                 except Exception as e:
                     logger.error("Failed to notify admin about referred signup: %s", e)
 
-            payment_intents_col.update_one(
-                {"reference": reference, "status": {"$ne": "fulfilled"}},
-                {"$set": {"status": "fulfilled", "fulfilled_at": now}}
-            )
-
             channel_id = GOLD_CHANNEL_ID if channel_type == "gold" else FOREX_CHANNEL_ID
             name = "JAY GOLD MASTER VIP" if channel_type == "gold" else "JAY FX PREMIUM SIGNALS"
             bot = Bot(token=BOT_TOKEN)
+            invite_link = intent.get("invite_link")
+            invite_expires_at = intent.get("invite_link_expires_at")
             try:
                 if is_renewal:
                     await bot.send_message(
@@ -1789,9 +1880,14 @@ async def paystack_webhook(request: Request, x_paystack_signature: str = Header(
                         parse_mode="HTML",
                     )
                 else:
-                    invite_link = await generate_single_use_invite(channel_id)
+                    if not invite_link:
+                        invite_link = await generate_single_use_invite(channel_id)
                     if invite_link:
                         invite_expires_at = now + timedelta(minutes=5)
+                        payment_intents_col.update_one(
+                            {"reference": reference},
+                            {"$set": {"invite_link": invite_link, "invite_link_expires_at": invite_expires_at}}
+                        )
                         if users_col is not None:
                             users_col.update_one(
                                 {"telegram_id": tg_id, "channel_type": channel_type},
@@ -1836,8 +1932,23 @@ async def paystack_webhook(request: Request, x_paystack_signature: str = Header(
                                 )
                             except Exception as e:
                                 logger.error("Failed to notify admin about invite failure: %s", e)
+
+                if is_renewal or invite_link:
+                    payment_intents_col.update_one(
+                        {"reference": reference, "status": "processing"},
+                        {"$set": {"status": "fulfilled", "fulfilled_at": now}}
+                    )
+                else:
+                    payment_intents_col.update_one(
+                        {"reference": reference, "status": "processing"},
+                        {"$set": {"status": "access_pending", "access_error": "Invite link generation failed"}}
+                    )
             except Exception as e:
                 logger.error(f"Access message failed: {e}")
+                payment_intents_col.update_one(
+                    {"reference": reference, "status": "processing"},
+                    {"$set": {"status": "access_pending", "access_error": str(e)[:500]}}
+                )
 
         return {"status": "success"}
 
