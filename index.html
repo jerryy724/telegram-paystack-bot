@@ -1217,10 +1217,21 @@
                 const initData = await initRes.json();
                 if (!initRes.ok) throw new Error(initData.detail || 'Could not start payment.');
 
-                if (!window.PaystackPop) throw new Error('Payment checkout failed to load. Please try again.');
-
-                const popup = new PaystackPop();
-                popup.resumeTransaction(initData.access_code);
+                // Popup V2 normally handles the access_code. If Telegram's embedded
+                // browser blocks the popup, use Paystack's official authorization URL
+                // returned by the same server-side transaction initialization.
+                if (window.PaystackPop && typeof PaystackPop === 'function') {
+                    const popup = new PaystackPop();
+                    popup.resumeTransaction(initData.access_code);
+                } else if (initData.authorization_url) {
+                    if (tg.openLink) {
+                        tg.openLink(initData.authorization_url);
+                    } else {
+                        window.location.href = initData.authorization_url;
+                    }
+                } else {
+                    throw new Error('Paystack checkout could not be loaded. Please try again.');
+                }
 
                 payBtn.textContent = 'Waiting for payment...';
                 const completed = await pollPayment(initData.reference, tg.initData);
