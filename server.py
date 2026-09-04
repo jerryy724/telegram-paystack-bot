@@ -28,7 +28,7 @@ import string
 from datetime import datetime, timedelta
 from contextlib import asynccontextmanager
 from typing import Optional
-from urllib.parse import parse_qsl
+from urllib.parse import parse_qsl, quote
 from datetime import timezone
 import html
 from fastapi.middleware.cors import CORSMiddleware
@@ -65,6 +65,17 @@ FOREX_CHANNEL_ID = os.getenv("FOREX_CHANNEL_ID", "-1004451754852")
 ADMIN_USERNAME = "jay_empire247"
 BOT_USERNAME = os.getenv("BOT_USERNAME", "JayEmpire_bot").lstrip("@")
 ADMIN_TELEGRAM_ID = int(os.getenv("ADMIN_TELEGRAM_ID", "0"))
+
+def mini_app_launch_url():
+    """Build the Mini App URL with the live backend URL supplied by Render.
+
+    This prevents the GitHub Pages frontend from depending on a stale hard-coded
+    Render hostname. Telegram opens the exact backend URL configured on the
+    running service.
+    """
+    base = MINI_APP_URL.rstrip("?")
+    separator = "&" if "?" in base else "?"
+    return f"{base}{separator}backend={quote(RENDER_URL.rstrip('/'), safe='')}"
 
 ADMIN_API_KEY = os.getenv("ADMIN_API_KEY", "")
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
@@ -340,17 +351,26 @@ async def start_cmd(update: Update, context):
     chat_id = user.id
     username = user.username or ""
 
-    # Telegram exposes deep-link payloads in context.args. Using context.args
-    # is more reliable than reparsing the raw /start message text.
+    # Telegram normally exposes the deep-link payload in context.args. Keep a
+    # raw-message fallback as well, so the referral flow still works if a webhook
+    # adapter delivers /start differently.
     ref_code = None
+    referral_payload_present = False
+    payload = ""
     if context.args:
         payload = str(context.args[0]).strip()
-        if payload.lower().startswith("ref_"):
-            candidate = payload[4:].strip().upper()
-            if re.fullmatch(r"JAY[A-Z0-9]{7}", candidate) and affiliates_col is not None:
-                affiliate_for_link = affiliates_col.find_one({"ref_code": candidate, "is_active": True})
-                if affiliate_for_link and int(affiliate_for_link.get("telegram_id", 0)) != int(chat_id):
-                    ref_code = candidate
+    elif update.message.text and " " in update.message.text:
+        payload = update.message.text.split(" ", 1)[1].strip()
+
+    if payload.lower().startswith("ref_"):
+        referral_payload_present = True
+        candidate = payload[4:].strip().upper()
+        if re.fullmatch(r"JAY[A-Z0-9]{7}", candidate) and affiliates_col is not None:
+            affiliate_for_link = affiliates_col.find_one({"ref_code": candidate, "is_active": True})
+            if affiliate_for_link and int(affiliate_for_link.get("telegram_id", 0)) != int(chat_id):
+                ref_code = candidate
+            else:
+                logger.warning("Invalid/inactive/self referral payload %s for Telegram ID %s", candidate, chat_id)
 
     logger.info("/start from %s (@%s), referral=%s", chat_id, username, ref_code or "none")
 
@@ -397,17 +417,28 @@ async def start_cmd(update: Update, context):
 
     is_affiliate = affiliates_col.find_one({"telegram_id": chat_id, "is_active": True}) if affiliates_col is not None else None
 
-    # Referral deep-link users receive ONLY the subscription button.
-    if ref_code:
-        kb = [[InlineKeyboardButton("📈 Subscribe", web_app=WebAppInfo(url=MINI_APP_URL))]]
-        welcome_text = (
-            "👑 <b>JAY EMPIRE VIP TERMINAL</b>\n\n"
-            "🎯 <b>You’ve been invited to JAY Trading Hub.</b>\n\n"
-            "Choose a VIP plan, accept the terms, complete payment securely through Paystack, and receive your private channel access link after payment is verified.\n\n"
-            "Tap <b>📈 Subscribe</b> below to get started."
-        )
+    # Any /start referral payload is a referral landing flow: ONLY Subscribe is shown.
+    # A valid code is stored server-side; an invalid code is never silently converted
+    # into a normal affiliate signup flow.
+    if referral_payload_present:
+        kb = [[InlineKeyboardButton("📈 Subscribe", web_app=WebAppInfo(url=mini_app_launch_url()))]]
+        if ref_code:
+            welcome_text = (
+                "👑 <b>JAY EMPIRE VIP TERMINAL</b>\n\n"
+                "🎯 <b>You’ve been invited to JAY Trading Hub.</b>\n\n"
+                "Premium market access, focused trade signals and private member updates — all in one place.\n\n"
+                "Your invitation has been recorded. Choose a plan below, complete your payment securely through Paystack, and your private VIP access link will be sent to you after payment verification.\n\n"
+                "Tap <b>📈 Subscribe</b> to get started."
+            )
+        else:
+            welcome_text = (
+                "👑 <b>JAY EMPIRE VIP TERMINAL</b>\n\n"
+                "⚠️ <b>This invitation link is no longer active.</b>\n\n"
+                "You can still access the VIP Terminal below.\n\n"
+                "Tap <b>📈 Subscribe</b> to continue."
+            )
     else:
-        kb = [[InlineKeyboardButton("📈 Subscribe", web_app=WebAppInfo(url=MINI_APP_URL))]]
+        kb = [[InlineKeyboardButton("📈 Subscribe", web_app=WebAppInfo(url=mini_app_launch_url()))]]
         if is_affiliate is None:
             kb.append([InlineKeyboardButton("🤝 Become an Affiliate", callback_data="affiliate_start")])
         else:
@@ -488,7 +519,14 @@ async def callback_handler(update: Update, context):
         except Exception:
             pass
 
+async def affiliate_dashboard_cmd(update: Update, context):
+    user = update.effective_user
+    if not user or not update.message:
+        return
+    await show_affiliate_dashboard(user.id, Bot(token=BOT_TOKEN))
+
 telegram_app.add_handler(CommandHandler("start", start_cmd))
+telegram_app.add_handler(CommandHandler("affiliate", affiliate_dashboard_cmd))
 telegram_app.add_handler(CallbackQueryHandler(callback_handler))
 
 # ==============================================================================
@@ -638,7 +676,7 @@ async def handle_affiliate_callback(chat_id, action, username=""):
             ),
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("📈 Open VIP Subscription", web_app=WebAppInfo(url=MINI_APP_URL))],
+                [InlineKeyboardButton("📈 Open VIP Subscription", web_app=WebAppInfo(url=mini_app_launch_url()))],
                 [InlineKeyboardButton("📊 My Affiliate Dashboard", callback_data="affiliate_dashboard")]
             ])
         )
@@ -668,12 +706,21 @@ async def handle_affiliate_callback(chat_id, action, username=""):
             [InlineKeyboardButton("🔙 Back", callback_data="back_main")]
         ]
         terms = (
-            f"👑 <b>JAY Trading Hub Affiliate Program</b>\n\n"
-            f"<b>💰 Commission:</b> {COMMISSION_FIRST_SALE}% on a first qualifying sale and {COMMISSION_RENEWAL}% on renewals.\n"
-            f"<b>🏆 Milestone:</b> {REFERRAL_MILESTONE} active referrals = Lifetime VIP reward.\n"
-            f"<b>💸 Withdrawal:</b> Minimum GHS {MIN_WITHDRAWAL_MINOR/100:,.2f}. Withdrawals are processed within 48 hours upon request. Withdrawals placed on weekends will be processed on the next working day.\n\n"
-            f"No fake signups, self-referrals or spam. By joining, you agree to these terms and to provide accurate payout information.\n\n"
-            "Tap <b>I Agree and Join</b> to continue."
+            "👑 <b>JAY Trading Hub Affiliate Program</b>\n\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"💰 <b>Commission</b>\n\n{COMMISSION_FIRST_SALE}% on your first qualifying sale.\n{COMMISSION_RENEWAL}% on renewals.\n\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"🏆 <b>Lifetime VIP Reward</b>\n\nReach {REFERRAL_MILESTONE} active referrals and unlock Lifetime VIP access.\n\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"💸 <b>Withdrawals</b>\n\nMinimum withdrawal: GHS {MIN_WITHDRAWAL_MINOR/100:,.2f}.\n\n"
+            "Withdrawals are processed within 48 hours upon request.\n"
+            "Withdrawals placed on weekends will be processed on the next working day.\n\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
+            "📌 <b>Program Rules</b>\n\n"
+            "No fake signups, self-referrals or spam.\n"
+            "Please provide accurate payout information.\n\n"
+            "By joining, you agree to these terms.\n\n"
+            "Tap <b>✅ I Agree and Join</b> to continue."
         )
         await bot.send_message(chat_id=chat_id, text=terms, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(kb))
 
@@ -731,7 +778,7 @@ async def show_main_menu(chat_id, bot):
     is_aff = None
     if affiliates_col is not None:
         is_aff = affiliates_col.find_one({"telegram_id": chat_id, "is_active": True})
-    kb = [[InlineKeyboardButton("📈 Subscribe", web_app=WebAppInfo(url=MINI_APP_URL))]]
+    kb = [[InlineKeyboardButton("📈 Subscribe", web_app=WebAppInfo(url=mini_app_launch_url()))]]
     if is_aff is None:
         kb.append([InlineKeyboardButton("🤝 Become an Affiliate", callback_data="affiliate_start")])
     else:
@@ -785,20 +832,26 @@ async def show_affiliate_dashboard(chat_id, bot):
         payout_detail = f"📱 {m.get('provider_name','N/A')} • {m.get('phone_number','N/A')}"
 
     dashboard = (
-        "💎 <b>Jay Empire Affiliate Dashboard</b>\n\n"
-        f"🔗 <b>Referral Link:</b>\n<code>{html.escape(ref_link)}</code>\n\n"
-        "💰 <b>Wallet (GHS)</b>\n"
-        f"  Total Earned: GHS {earned/100:,.2f}\n"
-        f"  Total Withdrawn: GHS {withdrawn/100:,.2f}\n"
-        f"  Reserved/Pending: GHS {reserved/100:,.2f}\n"
-        f"  <b>Available: GHS {available/100:,.2f}</b>\n"
-        f"  Pending Payouts: {pending}\n\n"
-        "👥 <b>Referrals</b>\n"
-        f"  Total: {total_refs} | Active: {active_refs}\n"
-        f"  Commission: {COMMISSION_FIRST_SALE}% first | {COMMISSION_RENEWAL}% renewal\n"
-        f"  🏆 Milestone: {milestone}\n\n"
-        f"💳 <b>Payout:</b> {html.escape(payout_detail)}\n"
-        f"📊 <b>Code:</b> <code>{html.escape(aff['ref_code'])}</code>"
+        "💎 <b>JAY EMPIRE AFFILIATE DASHBOARD</b>\n\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"🔗 <b>Your Referral Link</b>\n\n<code>{html.escape(ref_link)}</code>\n\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "💰 <b>Wallet</b>\n\n"
+        f"Total Earned: <b>GHS {earned/100:,.2f}</b>\n"
+        f"Total Withdrawn: GHS {withdrawn/100:,.2f}\n"
+        f"Pending/Reserved: GHS {reserved/100:,.2f}\n"
+        f"Available: <b>GHS {available/100:,.2f}</b>\n"
+        f"Pending Payouts: {pending}\n\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "👥 <b>Referral Performance</b>\n\n"
+        f"Total Referrals: {total_refs}\n"
+        f"Active Referrals: {active_refs}\n"
+        f"First Sale: {COMMISSION_FIRST_SALE}%\n"
+        f"Renewal: {COMMISSION_RENEWAL}%\n"
+        f"Lifetime VIP: {milestone}\n\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"💳 <b>Payout Method</b>\n\n{html.escape(payout_detail)}\n\n"
+        f"📊 <b>Referral Code:</b> <code>{html.escape(aff['ref_code'])}</code>"
     )
     kb = [
         [InlineKeyboardButton("📋 View Statement", callback_data="affiliate_statement")],
@@ -1045,7 +1098,7 @@ async def send_reminder(user_id: int, channel_type: str, days_left: int):
     bot = Bot(token=BOT_TOKEN)
     name = "JAY GOLD MASTER VIP" if channel_type == "gold" else "JAY FX PREMIUM SIGNALS"
     try:
-        kb = InlineKeyboardMarkup([[InlineKeyboardButton("Renew Now", web_app=WebAppInfo(url=MINI_APP_URL))]])
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton("Renew Now", web_app=WebAppInfo(url=mini_app_launch_url()))]])
         await bot.send_message(
             chat_id=user_id,
             text=f"{name} expires in {days_left} day(s).\nRenew now to avoid removal.",
@@ -1078,7 +1131,7 @@ async def run_daily_checks():
         })
         for lead in unconverted:
             try:
-                kb = InlineKeyboardMarkup([[InlineKeyboardButton("Enter VIP Terminal", web_app=WebAppInfo(url=MINI_APP_URL))]])
+                kb = InlineKeyboardMarkup([[InlineKeyboardButton("Enter VIP Terminal", web_app=WebAppInfo(url=mini_app_launch_url()))]])
                 await Bot(token=BOT_TOKEN).send_message(
                     chat_id=lead["telegram_id"],
                     text="Jay Empire VIP Market Alert\n\nHigh-precision trade setups are active now. Tap below:",
@@ -1143,8 +1196,16 @@ async def lifespan(app: FastAPI):
     if missing:
         raise RuntimeError("Missing required environment variables: " + ", ".join(missing))
 
+    global BOT_USERNAME
     await telegram_app.initialize()
     await telegram_app.start()
+    try:
+        me = await telegram_app.bot.get_me()
+        if me.username:
+            BOT_USERNAME = me.username.lstrip("@")
+            logger.info("Using Telegram bot username: @%s", BOT_USERNAME)
+    except Exception as e:
+        logger.warning("Could not resolve bot username from Telegram: %s", e)
 
     webhook_target = f"{RENDER_URL.rstrip('/')}/telegram-webhook"
     bot = Bot(token=BOT_TOKEN)
@@ -1667,13 +1728,27 @@ async def paystack_webhook(request: Request, x_paystack_signature: str = Header(
             # Mark the payment fulfilled only after all DB-side entitlement/accounting
             # work has completed. A second webhook cannot credit it again.
             if customers_col is not None:
-                customer_update = {"$setOnInsert": {"telegram_id": tg_id, "paid_purchase_count": 0}}
+                customer_update = {
+                    "$setOnInsert": {"telegram_id": tg_id, "paid_purchase_count": 0},
+                    "$set": {
+                        "last_payment": {
+                            "reference": reference,
+                            "amount_minor": int(data.get("amount", 0)),
+                            "currency": data.get("currency"),
+                            "channel_type": channel_type,
+                            "plan_key": intent.get("plan_key"),
+                            "paid_at": now,
+                        },
+                        "last_paid_at": now,
+                        "last_reference": reference,
+                        "last_channel": channel_type,
+                        "last_plan": intent.get("plan_key"),
+                    }
+                }
                 if not is_test:
                     customer_update["$inc"] = {"paid_purchase_count": 1}
                     if ref_code:
-                        customer_update["$set"] = {"referred_by": ref_code}
-                else:
-                    customer_update["$set"] = {}
+                        customer_update["$set"]["referred_by"] = ref_code
                 customers_col.update_one({"telegram_id": tg_id}, customer_update, upsert=True)
 
             # Notify the admin for every successful referred signup. The bot sends
