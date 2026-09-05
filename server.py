@@ -102,12 +102,12 @@ PAYSTACK_ACCOUNT_COUNTRY = os.getenv("PAYSTACK_ACCOUNT_COUNTRY", "ghana").lower(
 # CANONICAL PRICING
 # ==============================================================================
 PLANS = [
-    {"key": "test", "name": "Test Phase", "usd": 0.10, "days": 1, "original": None, "is_test": True},
-    {"key": "1m", "name": "1 Month Access", "usd": 15, "days": 30, "original": 25, "is_test": False},
-    {"key": "3m", "name": "3 Months Access", "usd": 40, "days": 90, "original": 60, "is_test": False},
-    {"key": "6m", "name": "6 Months Access", "usd": 80, "days": 180, "original": 120, "is_test": False},
-    {"key": "1y", "name": "1 Year Access", "usd": 150, "days": 365, "original": 250, "is_test": False},
-    {"key": "lifetime", "name": "Lifetime VIP", "usd": 700, "days": 36500, "original": 1500, "is_test": False},
+
+    {"key": "1m", "name": "1 Month Access", "usd": 20, "days": 30, "original": 35, "is_test": False},
+    {"key": "3m", "name": "3 Months Access", "usd": 50, "days": 90, "original": 65, "is_test": False},
+    {"key": "6m", "name": "6 Months Access", "usd": 100, "days": 180, "original": 120, "is_test": False},
+    {"key": "1y", "name": "1 Year Access", "usd": 200, "days": 365, "original": 350, "is_test": False},
+    {"key": "lifetime", "name": "Lifetime VIP", "usd": 900, "days": 36500, "original": 1500, "is_test": False},
 ]
 PLANS_BY_KEY = {p["key"]: p for p in PLANS}
 
