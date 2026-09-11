@@ -61,7 +61,7 @@ PAYSTACK_SECRET = os.getenv("PAYSTACK_SECRET_KEY", "")
 MONGO_URI = os.getenv("MONGO_URI", "").strip().strip('"').strip("'")
 MINI_APP_URL = os.getenv("MINI_APP_URL", "https://jerryy724.github.io/telegram-paystack-bot/")
 RENDER_URL = os.getenv("RENDER_EXTERNAL_URL", "https://telegram-paystack-bot-415x.onrender.com")
-MINI_APP_VERSION = "20260904-v11"
+MINI_APP_VERSION = "20260911-v12"
 
 GOLD_CHANNEL_ID = os.getenv("GOLD_CHANNEL_ID", "-1004329655598")
 FOREX_CHANNEL_ID = os.getenv("FOREX_CHANNEL_ID", "-1004451754852")
@@ -84,7 +84,7 @@ def mini_app_launch_url():
         f"&v={quote(MINI_APP_VERSION, safe='')}"
     )
 
-def mini_app_payment_return_url(status_token: str) -> str:
+def mini_app_payment_return_url(status_token: str, reference: str) -> str:
     """Paystack callback target that returns the customer to the Mini App.
 
     The signed status token lets the frontend recover even if Telegram initData is
@@ -92,7 +92,11 @@ def mini_app_payment_return_url(status_token: str) -> str:
     """
     base = mini_app_launch_url()
     separator = "&" if "?" in base else "?"
-    return f"{base}{separator}payment_status_token={quote(status_token, safe='')}"
+    return (
+        f"{base}{separator}"
+        f"payment_ref={quote(reference, safe='')}"
+        f"&payment_status_token={quote(status_token, safe='')}"
+    )
 
 ADMIN_API_KEY = os.getenv("ADMIN_API_KEY", "")
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
@@ -1504,14 +1508,21 @@ async def api_initiate_payment(payload: InitiatePaymentRequest):
     if plan.get("is_test") and existing and existing.get("test_used"):
         raise HTTPException(status_code=400, detail="Test phase already used for this channel. Please choose a paid plan.")
 
-    # Prevent repeated initialization spam while a previous checkout is still open.
-    recent_cutoff = datetime.utcnow() - timedelta(minutes=15)
+    # Reuse only a very recent checkout for the SAME customer + channel + plan + currency.
+    # Reusing an unrelated/stale access_code can make Paystack show a generic
+    # "An error occurred" message. Older or mismatched pending intents are abandoned
+    # and a fresh Paystack transaction is created.
+    recent_cutoff = datetime.utcnow() - timedelta(minutes=10)
     recent = payment_intents_col.find_one({
         "telegram_id": telegram_id,
+        "channel_type": payload.channel_type,
+        "plan_key": payload.plan_key,
+        "currency": payload.currency,
         "status": "pending",
-        "created_at": {"$gte": recent_cutoff}
-    })
-    if recent and recent.get("access_code"):
+        "created_at": {"$gte": recent_cutoff},
+        "access_code": {"$exists": True, "$nin": [None, ""]}
+    }, sort=[("created_at", DESCENDING)])
+    if recent:
         status_token = make_payment_status_token(recent["reference"], telegram_id)
         return {
             "access_code": recent["access_code"],
@@ -1520,11 +1531,22 @@ async def api_initiate_payment(payload: InitiatePaymentRequest):
             "status_token": status_token
         }
 
+    # Mark stale pending checkouts so they can never be accidentally reused.
+    payment_intents_col.update_many(
+        {
+            "telegram_id": telegram_id,
+            "status": "pending",
+            "created_at": {"$lt": recent_cutoff}
+        },
+        {"$set": {"status": "abandoned", "abandoned_at": datetime.utcnow(), "abandoned_reason": "Checkout expired before completion"}}
+    )
+
     rate = CURRENCY_RATES[payload.currency]
     amount_minor = int(round(plan["usd"] * rate * 100))
     reference = f"JAY-{secrets.token_hex(8).upper()}"
     email = f"tg_{telegram_id}@jayempire.com"
     status_token = make_payment_status_token(reference, telegram_id)
+    callback_url = mini_app_payment_return_url(status_token, reference)
 
     # Referral attribution is server-side. The browser cannot choose a referrer.
     lead = leads_col.find_one({"telegram_id": telegram_id}) if leads_col is not None else None
@@ -1558,6 +1580,8 @@ async def api_initiate_payment(payload: InitiatePaymentRequest):
         "fulfilled_at": None,
         "access_code": None,
         "authorization_url": None,
+        "callback_url": callback_url,
+        "status_token_expires_at": datetime.utcnow() + timedelta(seconds=PAYMENT_STATUS_TOKEN_TTL_SECONDS),
     }
 
     # Persist the internal payment intent before calling Paystack. This prevents a fast
@@ -1579,6 +1603,7 @@ async def api_initiate_payment(payload: InitiatePaymentRequest):
                     "amount": amount_minor,
                     "currency": payload.currency,
                     "reference": reference,
+                    "callback_url": callback_url,
                     "metadata": {
                         "payment_reference": reference,
                         "telegram_id": telegram_id,
@@ -1713,8 +1738,19 @@ async def _replay_verified_payment_for_recovery(intent: dict, verified: dict):
     return await paystack_webhook(request, signature)
 
 @app.get("/api/payment-recovery")
-async def api_payment_recovery(reference: Optional[str] = None, init_data: Optional[str] = None, x_telegram_init_data: Optional[str] = Header(None)):
-    init_data = x_telegram_init_data or init_data or ""
+async def api_payment_recovery(
+    reference: Optional[str] = None,
+    init_data: Optional[str] = None,
+    x_telegram_init_data: Optional[str] = Header(None),
+    x_payment_status_token: Optional[str] = Header(None),
+    payment_status_token: Optional[str] = None,
+):
+    token = x_payment_status_token or payment_status_token
+    telegram_id = verify_payment_status_token(token, reference) if token and reference else None
+    if telegram_id is None:
+        init_data = x_telegram_init_data or init_data or ""
+        tg = validate_telegram_init_data(init_data)
+        telegram_id = tg["telegram_id"]
     """Recover a recent successful payment when Telegram/Paystack reloads the Mini App.
 
     A merely abandoned/pending checkout is never presented as paid. If Paystack
@@ -1722,8 +1758,6 @@ async def api_payment_recovery(reference: Optional[str] = None, init_data: Optio
     customer receives entitlement and the one-time invite even if the webhook
     arrived late or the Mini App was reloaded first.
     """
-    tg = validate_telegram_init_data(init_data)
-    telegram_id = tg["telegram_id"]
     if payment_intents_col is None:
         raise HTTPException(status_code=503, detail="Service temporarily unavailable")
 
