@@ -1284,27 +1284,37 @@
         }
 
         async function recoverPendingPayment() {
-            // IMPORTANT: Paystack's resumeTransaction flow stays inside this Mini App.
-            // We therefore recover from our backend rather than relying on a Paystack
-            // redirect, browser history, or the previous JavaScript step.
+            // Paystack may return/reload this Mini App after checkout. Recover using
+            // the signed payment token first; Telegram initData is only the fallback.
             let reference = null;
+            let statusToken = null;
             try {
                 const params = new URLSearchParams(window.location.search);
-                reference = params.get('reference') || params.get('trxref') || params.get('payment_ref');
-                if (!reference) {
-                    const saved = JSON.parse(localStorage.getItem('jay_pending_payment') || 'null');
-                    if (saved && saved.reference && Date.now() - Number(saved.saved_at || 0) < 2 * 60 * 60 * 1000) {
-                        reference = saved.reference;
-                    }
+                reference = params.get('payment_ref') || params.get('reference') || params.get('trxref') || params.get('payment_ref');
+                statusToken = params.get('payment_status_token');
+
+                const saved = JSON.parse(localStorage.getItem('jay_pending_payment') || 'null');
+                if (saved && Date.now() - Number(saved.saved_at || 0) < 30 * 60 * 1000) {
+                    if (!reference) reference = saved.reference || null;
+                    if (!statusToken) statusToken = saved.status_token || null;
                 }
             } catch (e) {}
 
-            if (!tg.initData) return;
+            if (!reference) return;
+            if (!statusToken && !tg.initData) return;
+
+            savePendingPayment(reference, statusToken);
+            switchStep('success');
+            document.getElementById('success-title').textContent = 'Confirming Payment…';
+            document.getElementById('success-message').textContent = 'We are confirming your payment and preparing your VIP access. Please wait a moment.';
+            document.getElementById('success-access-wrap').style.display = 'none';
 
             try {
-                const query = reference ? `?reference=${encodeURIComponent(reference)}` : '';
-                const res = await fetch(`${BACKEND_URL}/api/payment-recovery${query}`, {
-                    headers: { 'X-Telegram-Init-Data': tg.initData },
+                const headers = {};
+                if (statusToken) headers['X-Payment-Status-Token'] = statusToken;
+                else headers['X-Telegram-Init-Data'] = tg.initData;
+                const res = await fetch(`${BACKEND_URL}/api/payment-recovery?reference=${encodeURIComponent(reference)}`, {
+                    headers,
                     cache: 'no-store'
                 });
                 if (!res.ok) return;
@@ -1314,19 +1324,8 @@
                     showPaymentSuccess(data);
                     return;
                 }
-
-                // A genuinely unpaid/abandoned checkout must NOT reopen the
-                // "Confirming Payment" screen. The customer simply gets the normal
-                // subscription menu again.
-                if (data.status === 'processing' || data.status === 'access_pending') {
-                    const ref = data.reference || reference;
-                    if (ref) {
-                        switchStep('success');
-                        document.getElementById('success-title').textContent = 'Confirming Payment…';
-                        document.getElementById('success-message').textContent = 'Your payment was received. We are preparing your VIP access now.';
-                        document.getElementById('success-access-wrap').style.display = 'none';
-                        await startPaymentMonitor(ref, null);
-                    }
+                if (data.status === 'processing' || data.status === 'access_pending' || data.status === 'pending') {
+                    await startPaymentMonitor(reference, statusToken);
                 }
             } catch (e) {
                 console.log('Payment recovery check:', e);
@@ -1377,8 +1376,8 @@
                 }
 
                 // Start verification BEFORE opening Paystack. Popup V2's
-                // resumeTransaction(accessCode) does not accept callback options;
-                // the secure status monitor is therefore the post-payment trigger.
+                // resumeTransaction(accessCode) is the documented server-initialized
+                // flow; the backend status monitor handles the post-payment result.
                 startPaymentMonitor(initData.reference, initData.status_token);
                 payBtn.textContent = 'Waiting for payment...';
 
