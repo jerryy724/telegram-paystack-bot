@@ -5,9 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Jay Empire VIP</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <!-- v2 inline.js is required for resumeTransaction(), which lets us lock
-         the price server-side instead of trusting the browser with the amount. -->
-    <script src="https://js.paystack.co/v2/inline.js"></script>
+    <!-- Paystack checkout uses the server-initialized redirect flow. -->
 
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -1284,37 +1282,40 @@
         }
 
         async function recoverPendingPayment() {
-            // Paystack may return/reload this Mini App after checkout. Recover using
-            // the signed payment token first; Telegram initData is only the fallback.
+            // IMPORTANT: Paystack's resumeTransaction flow stays inside this Mini App.
+            // We therefore recover from our backend rather than relying on a Paystack
+            // redirect, browser history, or the previous JavaScript step.
             let reference = null;
             let statusToken = null;
             try {
                 const params = new URLSearchParams(window.location.search);
-                reference = params.get('payment_ref') || params.get('reference') || params.get('trxref') || params.get('payment_ref');
-                statusToken = params.get('payment_status_token');
-
+                reference = params.get('reference') || params.get('trxref') || params.get('payment_ref');
+                statusToken = params.get('payment_status_token') || params.get('status_token');
                 const saved = JSON.parse(localStorage.getItem('jay_pending_payment') || 'null');
-                if (saved && Date.now() - Number(saved.saved_at || 0) < 30 * 60 * 1000) {
-                    if (!reference) reference = saved.reference || null;
-                    if (!statusToken) statusToken = saved.status_token || null;
+                if ((!reference || !statusToken) && saved && Date.now() - Number(saved.saved_at || 0) < 2 * 60 * 60 * 1000) {
+                    reference = reference || saved.reference || null;
+                    statusToken = statusToken || saved.status_token || null;
                 }
             } catch (e) {}
 
-            if (!reference) return;
-            if (!statusToken && !tg.initData) return;
+            // Paystack redirect recovery is intentionally token-first. The signed
+            // payment token is sufficient to identify this exact transaction even
+            // if Telegram initData is unavailable after the checkout redirect.
+            if (reference && statusToken) {
+                switchStep('success');
+                document.getElementById('success-title').textContent = 'Confirming Payment…';
+                document.getElementById('success-message').textContent = 'Your payment was received. We are verifying it and preparing your VIP access now.';
+                document.getElementById('success-access-wrap').style.display = 'none';
+                await startPaymentMonitor(reference, statusToken);
+                return;
+            }
 
-            savePendingPayment(reference, statusToken);
-            switchStep('success');
-            document.getElementById('success-title').textContent = 'Confirming Payment…';
-            document.getElementById('success-message').textContent = 'We are confirming your payment and preparing your VIP access. Please wait a moment.';
-            document.getElementById('success-access-wrap').style.display = 'none';
+            if (!tg.initData) return;
 
             try {
-                const headers = {};
-                if (statusToken) headers['X-Payment-Status-Token'] = statusToken;
-                else headers['X-Telegram-Init-Data'] = tg.initData;
-                const res = await fetch(`${BACKEND_URL}/api/payment-recovery?reference=${encodeURIComponent(reference)}`, {
-                    headers,
+                const query = reference ? `?reference=${encodeURIComponent(reference)}` : '';
+                const res = await fetch(`${BACKEND_URL}/api/payment-recovery${query}`, {
+                    headers: { 'X-Telegram-Init-Data': tg.initData },
                     cache: 'no-store'
                 });
                 if (!res.ok) return;
@@ -1324,8 +1325,19 @@
                     showPaymentSuccess(data);
                     return;
                 }
-                if (data.status === 'processing' || data.status === 'access_pending' || data.status === 'pending') {
-                    await startPaymentMonitor(reference, statusToken);
+
+                // A genuinely unpaid/abandoned checkout must NOT reopen the
+                // "Confirming Payment" screen. The customer simply gets the normal
+                // subscription menu again.
+                if (data.status === 'processing' || data.status === 'access_pending') {
+                    const ref = data.reference || reference;
+                    if (ref) {
+                        switchStep('success');
+                        document.getElementById('success-title').textContent = 'Confirming Payment…';
+                        document.getElementById('success-message').textContent = 'Your payment was received. We are preparing your VIP access now.';
+                        document.getElementById('success-access-wrap').style.display = 'none';
+                        await startPaymentMonitor(ref, null);
+                    }
                 }
             } catch (e) {
                 console.log('Payment recovery check:', e);
@@ -1371,21 +1383,20 @@
 
                 savePendingPayment(initData.reference, initData.status_token);
 
-                if (!window.PaystackPop || typeof PaystackPop !== 'function') {
-                    throw new Error('Paystack checkout could not be loaded. Please reopen the VIP Terminal and try again.');
+                if (!initData.authorization_url) {
+                    throw new Error('Paystack did not return a checkout URL. Please try again.');
                 }
 
-                // Start verification BEFORE opening Paystack. Popup V2's
-                // resumeTransaction(accessCode) is the documented server-initialized
-                // flow; the backend status monitor handles the post-payment result.
-                startPaymentMonitor(initData.reference, initData.status_token);
-                payBtn.textContent = 'Waiting for payment...';
-
-                const popup = new PaystackPop();
-                popup.resumeTransaction(initData.access_code);
-
-                // No authorization_url/window.location fallback is used. Leaving the
-                // Mini App here was the cause of the old return-to-Terms behavior.
+                // Use Paystack's documented redirect flow here instead of depending
+                // on Popup V2 inside Telegram's embedded WebView. The backend has
+                // already created the transaction and attached a signed callback URL.
+                // After payment Paystack returns to this same Mini App with the
+                // reference + payment_status_token, and the Mini App verifies the
+                // payment server-side before showing the VIP invite.
+                savePendingPayment(initData.reference, initData.status_token);
+                payBtn.textContent = 'Opening secure checkout...';
+                window.location.assign(initData.authorization_url);
+                return;
             } catch (err) {
                 tg.showAlert ? tg.showAlert(err.message || 'Payment error.') : alert(err.message || 'Payment error.');
             } finally {
