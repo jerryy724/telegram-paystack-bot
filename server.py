@@ -61,7 +61,7 @@ PAYSTACK_SECRET = os.getenv("PAYSTACK_SECRET_KEY", "")
 MONGO_URI = os.getenv("MONGO_URI", "").strip().strip('"').strip("'")
 MINI_APP_URL = os.getenv("MINI_APP_URL", "https://jerryy724.github.io/telegram-paystack-bot/")
 RENDER_URL = os.getenv("RENDER_EXTERNAL_URL", "https://telegram-paystack-bot-415x.onrender.com")
-MINI_APP_VERSION = "20260904-v11"
+MINI_APP_VERSION = "20260912-v13"
 
 GOLD_CHANNEL_ID = os.getenv("GOLD_CHANNEL_ID", "-1004329655598")
 FOREX_CHANNEL_ID = os.getenv("FOREX_CHANNEL_ID", "-1004451754852")
@@ -396,16 +396,45 @@ def get_paystack_headers():
     return {"Authorization": f"Bearer {PAYSTACK_SECRET}", "Content-Type": "application/json"}
 
 async def verify_paystack_transaction(reference):
+    """Verify a Paystack transaction without allowing upstream API errors to crash recovery.
+
+    Paystack documents 5xx responses as API-side errors. Recovery/polling must treat
+    those as an unavailable verification result, not as a failed customer payment.
+    """
     async with httpx.AsyncClient() as client:
-        res = await client.get(
-            f"https://api.paystack.co/transaction/verify/{reference}",
-            headers=get_paystack_headers(),
-            timeout=15.0
-        )
-        data = res.json()
-        if data.get("status"):
-            return data["data"]
-        return None
+        try:
+            res = await client.get(
+                f"https://api.paystack.co/transaction/verify/{reference}",
+                headers=get_paystack_headers(),
+                timeout=15.0
+            )
+            try:
+                data = res.json()
+            except ValueError:
+                logger.warning(
+                    "Paystack verify returned non-JSON: http=%s reference=%s",
+                    res.status_code, reference
+                )
+                return None
+
+            if res.status_code >= 500:
+                logger.warning(
+                    "Paystack verify upstream error: http=%s type=%s code=%s reference=%s",
+                    res.status_code, data.get("type"), data.get("code"), reference
+                )
+                return None
+
+            if data.get("status") and isinstance(data.get("data"), dict):
+                return data["data"]
+
+            logger.info(
+                "Paystack verify returned no successful data: http=%s status=%s message=%s reference=%s",
+                res.status_code, data.get("status"), data.get("message"), reference
+            )
+            return None
+        except httpx.HTTPError as e:
+            logger.warning("Paystack verify HTTP error for %s: %s", reference, e)
+            return None
 
 def generate_ref_code():
     suffix = ''.join(secrets.choice(string.ascii_uppercase + string.digits) for _ in range(7))
@@ -1573,21 +1602,23 @@ async def api_initiate_payment(payload: InitiatePaymentRequest):
             return {"access_code": existing_intent["access_code"], "reference": reference}
         raise HTTPException(status_code=500, detail="Could not record payment.")
 
+    init_payload = {
+        "email": email,
+        "amount": amount_minor,
+        "currency": payload.currency,
+        "reference": reference,
+        "callback_url": mini_app_payment_return_url(status_token),
+        "metadata": {
+            "payment_reference": reference,
+            "telegram_id": telegram_id,
+        },
+    }
+
     async with httpx.AsyncClient() as client:
         try:
             res = await client.post(
                 "https://api.paystack.co/transaction/initialize",
-                json={
-                    "email": email,
-                    "amount": amount_minor,
-                    "currency": payload.currency,
-                    "reference": reference,
-                    "callback_url": mini_app_payment_return_url(status_token),
-                    "metadata": {
-                        "payment_reference": reference,
-                        "telegram_id": telegram_id,
-                    },
-                },
+                json=init_payload,
                 headers=get_paystack_headers(),
                 timeout=20.0
             )
@@ -1595,6 +1626,27 @@ async def api_initiate_payment(payload: InitiatePaymentRequest):
                 data = res.json()
             except ValueError:
                 data = {"status": False, "message": res.text[:500]}
+
+            # Paystack documents 5xx as an API-side error. A single retry is safe
+            # with the same reference because Paystack transaction references must
+            # be unique; this also covers transient upstream failures without
+            # creating a second internal payment intent.
+            if res.status_code >= 500:
+                logger.warning(
+                    "Paystack initialize upstream 5xx; retrying once: http=%s reference=%s type=%s code=%s",
+                    res.status_code, reference, data.get("type"), data.get("code")
+                )
+                await asyncio.sleep(1.5)
+                res = await client.post(
+                    "https://api.paystack.co/transaction/initialize",
+                    json=init_payload,
+                    headers=get_paystack_headers(),
+                    timeout=20.0
+                )
+                try:
+                    data = res.json()
+                except ValueError:
+                    data = {"status": False, "message": res.text[:500]}
         except httpx.HTTPError as e:
             logger.exception("Paystack initialize HTTP error: %s", e)
             payment_intents_col.update_one({"reference": reference}, {"$set": {"status": "failed", "failed_at": datetime.utcnow()}})
@@ -1607,8 +1659,18 @@ async def api_initiate_payment(payload: InitiatePaymentRequest):
     )
     if not data.get("status") or not data.get("data", {}).get("access_code") or not data.get("data", {}).get("authorization_url"):
         logger.error("Paystack initialize failed (HTTP %s): %s", res.status_code, data)
-        payment_intents_col.update_one({"reference": reference}, {"$set": {"status": "failed", "failed_at": datetime.utcnow(), "paystack_error": data.get("message")}})
+        payment_intents_col.update_one({"reference": reference}, {"$set": {
+            "status": "failed",
+            "failed_at": datetime.utcnow(),
+            "paystack_error": data.get("message"),
+            "paystack_http_status": res.status_code,
+            "paystack_error_type": data.get("type"),
+            "paystack_error_code": data.get("code"),
+            "paystack_next_step": (data.get("meta") or {}).get("nextStep"),
+        }})
         detail = data.get("message") or "Could not start payment. Please try again."
+        if res.status_code >= 500:
+            raise HTTPException(status_code=503, detail=f"Paystack is temporarily unavailable: {detail}")
         raise HTTPException(status_code=502, detail=f"Paystack: {detail}")
 
     access_code = data["data"]["access_code"]
